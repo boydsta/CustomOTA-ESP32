@@ -115,27 +115,6 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         request->send(response);
     });
     
-    // Also add the same page on /updatev2 for testing
-    COTA_DEBUG_PRINTLN("CustomOTA: Registering /updatev2 route");
-    _server->on("/updatev2", HTTP_GET, [this](AsyncWebServerRequest *request) {
-        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
-            return request->requestAuthentication();
-        }
-        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", generateOTAPage());
-        response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0, private");
-        response->addHeader("Pragma", "no-cache");
-        response->addHeader("Expires", "Thu, 01 Jan 1970 00:00:00 GMT");
-        response->addHeader("Last-Modified", "Thu, 01 Jan 1970 00:00:00 GMT");
-        response->addHeader("ETag", String(millis()));
-        request->send(response);
-    });
-    
-    // Simple test route to verify new code is running
-    COTA_DEBUG_PRINTLN("CustomOTA: Registering /test route");
-    _server->on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "CustomOTA v2.1.1 is running successfully!");
-    });
-    
     _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
         handleUpdateStart(request);
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
