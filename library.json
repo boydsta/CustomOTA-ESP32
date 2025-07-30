@@ -1,0 +1,57 @@
+{
+    "name": "CustomOTA",
+    "version": "2.1.0",
+    "description": "Advanced ESP32 OTA library with dual partition backup system and modern web interface",
+    "keywords": [
+        "ota",
+        "esp32",
+        "update",
+        "firmware",
+        "web",
+        "rollback",
+        "backup",
+        "partition",
+        "real-time",
+        "async"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/boydsta/CustomOTA-ESP32.git"
+    },
+    "authors": [
+        {
+            "name": "Boyd Benton",
+            "email": "31177555+boydsta@users.noreply.github.com",
+            "url": "https://github.com/boydsta"
+        }
+    ],
+    "license": "MIT",
+    "homepage": "https://github.com/boydsta/CustomOTA-ESP32",
+    "dependencies": [
+        {
+            "name": "AsyncTCP",
+            "version": "^3.2.3",
+            "authors": "Hristo Gochkov"
+        },
+        {
+            "name": "ESPAsyncWebServer", 
+            "version": "^3.1.1",
+            "authors": "Hristo Gochkov"
+        }
+    ],
+    "frameworks": ["arduino", "espidf"],
+    "platforms": ["espressif32"],
+    "build": {
+        "includeDir": "src"
+    },
+    "export": {
+        "include": [
+            "src/*",
+            "examples/*",
+            "*.md",
+            "*.txt",
+            "library.*",
+            "LICENSE"
+        ]
+    }
+}

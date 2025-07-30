@@ -1,0 +1,134 @@
+name: Bug Report
+description: File a bug report to help us improve CustomOTA
+title: "[Bug]: "
+labels: ["bug", "triage"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Also tell us, what did you expect to happen?
+      placeholder: Describe the bug and what you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction-steps
+    attributes:
+      label: Steps to Reproduce
+      description: Please provide detailed steps to reproduce the issue
+      placeholder: |
+        1. Initialize CustomOTA with...
+        2. Upload firmware...
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-sample
+    attributes:
+      label: Code Sample
+      description: Please provide the relevant code that reproduces the issue
+      render: cpp
+    validations:
+      required: false
+
+  - type: dropdown
+    id: esp32-variant
+    attributes:
+      label: ESP32 Variant
+      description: Which ESP32 chip are you using?
+      options:
+        - ESP32
+        - ESP32-S2
+        - ESP32-S3
+        - ESP32-C3
+        - ESP32-C6
+        - Other (please specify in additional context)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: flash-size
+    attributes:
+      label: Flash Memory Size
+      description: What flash memory size does your ESP32 have?
+      options:
+        - 4MB
+        - 8MB
+        - 16MB
+        - Other (please specify in additional context)
+    validations:
+      required: true
+
+  - type: input
+    id: arduino-version
+    attributes:
+      label: Arduino ESP32 Core Version
+      description: Which version of Arduino ESP32 Core are you using?
+      placeholder: "e.g., 2.0.11"
+    validations:
+      required: true
+
+  - type: input
+    id: customota-version
+    attributes:
+      label: CustomOTA Version
+      description: Which version of CustomOTA are you using?
+      placeholder: "e.g., 2.0.0"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: authentication
+    attributes:
+      label: Authentication Configuration
+      description: How is authentication configured?
+      options:
+        - label: Authentication enabled
+        - label: Authentication disabled (open access)
+
+  - type: checkboxes
+    id: debug-enabled
+    attributes:
+      label: Debug Configuration
+      description: Debug settings
+      options:
+        - label: Debug output enabled (CUSTOM_OTA_DEBUG=1)
+        - label: Debug output disabled (CUSTOM_OTA_DEBUG=0)
+
+  - type: textarea
+    id: serial-output
+    attributes:
+      label: Serial Monitor Output
+      description: Please paste any relevant serial monitor output
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have tested with the latest version of CustomOTA
+          required: true
+        - label: I have checked existing issues for duplicates
+          required: true
+        - label: I have provided all requested information
+          required: true

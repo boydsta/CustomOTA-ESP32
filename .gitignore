@@ -1,0 +1,44 @@
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build files
+build/
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Arduino/PlatformIO build artifacts
+*.bin
+*.elf
+*.map
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Node modules (if using any web tools)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archives
+*.zip
+*.tar.gz
+*.rar

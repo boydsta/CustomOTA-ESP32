@@ -1,0 +1,54 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Extract version
+      id: version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+    - name: Create Release Archive
+      run: |
+        # Create release directory structure
+        mkdir -p CustomOTA-${{ steps.version.outputs.VERSION }}
+        
+        # Copy library files
+        cp -r src/ CustomOTA-${{ steps.version.outputs.VERSION }}/
+        cp -r examples/ CustomOTA-${{ steps.version.outputs.VERSION }}/
+        cp *.md CustomOTA-${{ steps.version.outputs.VERSION }}/
+        cp *.txt CustomOTA-${{ steps.version.outputs.VERSION }}/
+        cp library.* CustomOTA-${{ steps.version.outputs.VERSION }}/
+        cp LICENSE CustomOTA-${{ steps.version.outputs.VERSION }}/
+        
+        # Create archive
+        zip -r CustomOTA-${{ steps.version.outputs.VERSION }}.zip CustomOTA-${{ steps.version.outputs.VERSION }}/
+        tar -czf CustomOTA-${{ steps.version.outputs.VERSION }}.tar.gz CustomOTA-${{ steps.version.outputs.VERSION }}/
+        
+    - name: Extract Changelog
+      id: changelog
+      run: |
+        # Extract changelog for this version
+        sed -n "/## \[${{ steps.version.outputs.VERSION }}\]/,/## \[/p" CHANGELOG.md | sed '$d' > release_notes.md
+        
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: CustomOTA v${{ steps.version.outputs.VERSION }}
+        body_path: release_notes.md
+        files: |
+          CustomOTA-${{ steps.version.outputs.VERSION }}.zip
+          CustomOTA-${{ steps.version.outputs.VERSION }}.tar.gz
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
