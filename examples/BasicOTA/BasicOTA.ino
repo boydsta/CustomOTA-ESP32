@@ -54,9 +54,9 @@ void setup() {
   ota.setHardwareID("CustomOTA Example Device");
   ota.setFirmwareVersion("1.0.0");
   
-  // Set build timestamp (automatically uses compile time if not set)
+  // Set build timestamp (automatically uses compile time in dd/mm/yyyy format if not set)
   // You can also set a custom timestamp:
-  // ota.setBuildTimestamp("2025-07-30 15:30:00");
+  // ota.setBuildTimestamp("30/07/2025 15:30:00");
   
   // Start server
   server.begin();

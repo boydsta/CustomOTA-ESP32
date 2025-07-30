@@ -5,6 +5,13 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2025-07-30
+
+### Changed
+- **Build Date Format** - Changed from yyyy-mm-dd to dd/mm/yyyy format for better regional compatibility
+- Updated all examples and documentation to use dd/mm/yyyy format
+- Enhanced date formatting function for automatic build timestamp generation
+
 ## [2.1.0] - 2025-01-15
 
 ### Added
@@ -39,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved error handling and user feedback
 - Enhanced partition status reporting with firmware detection for both partitions
 - Updated web interface styling and responsiveness
-- Updated authorship
+- Complete rebranding to Boyd Benton authorship
 
 ### Removed
 - Manual backup creation functionality (replaced by automatic partition system)
@@ -67,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTTP Basic Authentication support
 - Real-time progress tracking
 - SPIFFS filesystem update support
-- Custom styling integration
+- Professional web interface styling integration
 
 ### Features
 - Modern web interface with drag & drop

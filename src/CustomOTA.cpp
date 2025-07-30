@@ -19,6 +19,41 @@
 
 #include "CustomOTA.h"
 
+// Helper function to format build date from __DATE__ to dd/mm/yyyy format
+String formatBuildDate() {
+    String date = __DATE__;  // Format: "Jul 30 2025"
+    String time = __TIME__;  // Format: "14:30:25"
+    
+    // Month name to number mapping
+    String months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    
+    // Parse the date string
+    String month = date.substring(0, 3);
+    String day = date.substring(4, 6);
+    String year = date.substring(7, 11);
+    
+    // Remove leading space from day if present
+    day.trim();
+    
+    // Convert month name to number
+    String monthNum = "01";
+    for (int i = 0; i < 12; i++) {
+        if (month == months[i]) {
+            monthNum = (i + 1 < 10) ? "0" + String(i + 1) : String(i + 1);
+            break;
+        }
+    }
+    
+    // Ensure day has leading zero if needed
+    if (day.length() == 1) {
+        day = "0" + day;
+    }
+    
+    // Return formatted date: dd/mm/yyyy hh:mm:ss
+    return day + "/" + monthNum + "/" + year + " " + time;
+}
+
 CustomOTA::CustomOTA() {
     // Initialize all variables - NO DELAY CALLS EVER!
     // This constructor must complete quickly for real-time compatibility
@@ -32,8 +67,8 @@ CustomOTA::CustomOTA() {
     _restartPending = false;
     _restartTime = 0;
     
-    // Set default build timestamp (will be overridden if setBuildTimestamp is called)
-    _buildTimestamp = String(__DATE__) + " " + String(__TIME__);
+    // Set default build timestamp in dd/mm/yyyy format (will be overridden if setBuildTimestamp is called)
+    _buildTimestamp = formatBuildDate();
 }
 
 void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* password) {
@@ -98,7 +133,7 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     // Simple test route to verify new code is running
     COTA_DEBUG_PRINTLN("CustomOTA: Registering /test route");
     _server->on("/test", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send(200, "text/plain", "NEW CustomOTA v2.0 is running!");
+        request->send(200, "text/plain", "CustomOTA v2.1.1 is running successfully!");
     });
     
     _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
@@ -220,7 +255,7 @@ String CustomOTA::generateOTAPage() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CustomOTA Update</title>
+    <title>Over The Air Update</title>
     <link rel="stylesheet" href="/styles.css?v=)rawliteral" + timestamp + R"rawliteral(">
     <style>
         /* Base styles - fallback if external CSS fails */

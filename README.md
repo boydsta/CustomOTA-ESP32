@@ -5,7 +5,7 @@
   <p>Professional Over-The-Air firmware updates with dual partition backup system</p>
   
   ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
-  ![Version](https://img.shields.io/badge/Version-2.1.0-blue.svg)
+  ![Version](https://img.shields.io/badge/Version-2.1.1-blue.svg)
   ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 </div>
 
@@ -98,7 +98,7 @@ void setup() {
     // Initialize CustomOTA
     otaUpdater.setHardwareID("MyDevice v1.0");
     otaUpdater.setFirmwareVersion("1.0.0");
-    // otaUpdater.setBuildTimestamp("2024-01-15 14:30:00"); // Optional: uses __DATE__ __TIME__ if not set
+    // otaUpdater.setBuildTimestamp("30/01/2024 14:30:00"); // Optional: uses dd/mm/yyyy format if not set
     otaUpdater.begin(&server);
     
     server.begin();
@@ -136,7 +136,7 @@ void setup() {
     otaUpdater.setCredentials("admin", "your-secure-password");
     otaUpdater.setHardwareID("MyDevice v1.0");
     otaUpdater.setFirmwareVersion("1.0.0");
-    // otaUpdater.setBuildTimestamp("2024-01-15 14:30:00"); // Optional: uses __DATE__ __TIME__ if not set
+    // otaUpdater.setBuildTimestamp("30/01/2024 14:30:00"); // Optional: uses dd/mm/yyyy format if not set
     otaUpdater.begin(&server);
     
     server.begin();
@@ -179,8 +179,8 @@ Set the current firmware version displayed in the web interface.
 
 #### `void setBuildTimestamp(const char* timestamp)`
 Set the build timestamp displayed in the web interface.
-- **Parameter**: `timestamp` - Build date/time string (e.g., "2024-01-15 14:30:00")
-- **Note**: If not called, automatically uses `__DATE__` and `__TIME__` compiler macros
+- **Parameter**: `timestamp` - Build date/time string (e.g., "30/01/2024 14:30:00")
+- **Note**: If not called, automatically uses `__DATE__` and `__TIME__` compiler macros in dd/mm/yyyy format
 - **Call before**: `begin()` method
 
 ### Advanced Methods

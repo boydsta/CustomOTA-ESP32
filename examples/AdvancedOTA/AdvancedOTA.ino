@@ -187,8 +187,8 @@ void setupOTA() {
   ota.setHardwareID("Advanced Example v2.0");
   ota.setFirmwareVersion("2.0.0-advanced");
   
-  // Set build timestamp - automatically uses __DATE__ and __TIME__ if not set manually
-  // ota.setBuildTimestamp("2024-01-15 14:30:00"); // Optional: manual override
+  // Set build timestamp - automatically uses __DATE__ and __TIME__ in dd/mm/yyyy format if not set manually
+  // ota.setBuildTimestamp("30/01/2024 14:30:00"); // Optional: manual override
   
   // Initialize OTA system
   ota.begin(&server);
