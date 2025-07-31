@@ -560,7 +560,6 @@ String CustomOTA::generateOTAPage() {
         <p><strong>Flash Size:</strong> )rawliteral" + String(ESP.getFlashChipSize()) + R"rawliteral( bytes</p>
         <p><strong>SPIFFS Partition:</strong> )rawliteral" + String(hasSpiffsPartition ? "Available" : "Not Available") + R"rawliteral(</p>
         <p><strong>SPIFFS Mount:</strong> )rawliteral" + String(SPIFFS.begin() ? "Mounted" : "Failed") + R"rawliteral(</p>
-        )rawliteral" + partitionDetails + R"rawliteral(
     </div>
     
     <hr>
@@ -761,6 +760,12 @@ String CustomOTA::generateOTAPage() {
                 });
         }, 5000);
     </script>
+
+    <hr>
+    
+    <div class="full-width-box">
+        )rawliteral" + partitionDetails + R"rawliteral(
+    </div>
 </body>
 </html>
 )rawliteral";
