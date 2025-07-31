@@ -177,11 +177,117 @@ String CustomOTA::generateOTAPage() {
     const esp_partition_t* running_partition = esp_ota_get_running_partition();
     String partitionInfo = "Unknown";
     String partitionStatus = "";
+    String partitionDetails = "";
     
     if (running_partition) {
         partitionInfo = String(running_partition->label);
         
-        // Check both partitions for firmware
+        // Build detailed partition table information
+        partitionDetails += "<h3>Partition Table Details</h3>";
+        partitionDetails += "<table style='border-collapse: collapse; width: 100%; margin: 10px 0;'>";
+        partitionDetails += "<tr style='background-color: #ddd; border: 1px solid #000;'>";
+        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Label</th>";
+        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Type</th>";
+        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Subtype</th>";
+        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Offset</th>";
+        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Size</th>";
+        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Status</th>";
+        partitionDetails += "</tr>";
+        
+        // Iterate through all partitions
+        esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+        
+        while (it != NULL) {
+            const esp_partition_t* part = esp_partition_get(it);
+            if (part) {
+                String typeStr = "";
+                String subtypeStr = "";
+                String statusStr = "";
+                String rowStyle = "";
+                
+                // Determine partition type
+                switch (part->type) {
+                    case ESP_PARTITION_TYPE_APP:
+                        typeStr = "APP";
+                        switch (part->subtype) {
+                            case ESP_PARTITION_SUBTYPE_APP_FACTORY: subtypeStr = "Factory"; break;
+                            case ESP_PARTITION_SUBTYPE_APP_OTA_0: subtypeStr = "OTA_0"; break;
+                            case ESP_PARTITION_SUBTYPE_APP_OTA_1: subtypeStr = "OTA_1"; break;
+                            default: subtypeStr = "OTA_" + String(part->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0);
+                        }
+                        
+                        // Check if partition has firmware
+                        if (part->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0 || part->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1 || part->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY) {
+                            uint32_t first_word;
+                            esp_err_t err = esp_partition_read(part, 0, &first_word, sizeof(first_word));
+                            if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+                                statusStr = "Has Firmware";
+                                if (strcmp(part->label, running_partition->label) == 0) {
+                                    statusStr += " (Running)";
+                                    rowStyle = " style='background-color: #c8e6c9; font-weight: bold;'";
+                                } else {
+                                    statusStr += " (Backup)";
+                                    rowStyle = " style='background-color: #fff3e0;'";
+                                }
+                            } else {
+                                statusStr = "Empty";
+                            }
+                        }
+                        break;
+                        
+                    case ESP_PARTITION_TYPE_DATA:
+                        typeStr = "DATA";
+                        switch (part->subtype) {
+                            case ESP_PARTITION_SUBTYPE_DATA_OTA: subtypeStr = "OTA Data"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_PHY: subtypeStr = "PHY Init"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_NVS: subtypeStr = "NVS"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_COREDUMP: subtypeStr = "Core Dump"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS: subtypeStr = "NVS Keys"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_EFUSE_EM: subtypeStr = "eFuse Emul"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_ESPHTTPD: subtypeStr = "ESP HTTP"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_FAT: subtypeStr = "FAT"; break;
+                            case ESP_PARTITION_SUBTYPE_DATA_SPIFFS: 
+                                subtypeStr = "SPIFFS"; 
+                                statusStr = SPIFFS.begin() ? "Mounted" : "Available";
+                                rowStyle = " style='background-color: #e1f5fe;'";
+                                break;
+                            default: subtypeStr = "Unknown (" + String(part->subtype, HEX) + ")";
+                        }
+                        break;
+                        
+                    default:
+                        typeStr = "Unknown (" + String(part->type, HEX) + ")";
+                        subtypeStr = String(part->subtype, HEX);
+                }
+                
+                // Format sizes in human readable format
+                String sizeStr = "";
+                if (part->size >= 1024 * 1024) {
+                    sizeStr = String(part->size / (1024 * 1024)) + " MB";
+                } else if (part->size >= 1024) {
+                    sizeStr = String(part->size / 1024) + " KB";
+                } else {
+                    sizeStr = String(part->size) + " B";
+                }
+                
+                String offsetStr = "0x" + String(part->address, HEX);
+                
+                partitionDetails += "<tr" + rowStyle + ">";
+                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + String(part->label) + "</td>";
+                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + typeStr + "</td>";
+                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + subtypeStr + "</td>";
+                partitionDetails += "<td style='padding: 6px; border: 1px solid #000; font-family: monospace;'>" + offsetStr + "</td>";
+                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + sizeStr + "</td>";
+                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + statusStr + "</td>";
+                partitionDetails += "</tr>";
+            }
+            it = esp_partition_next(it);
+        }
+        
+        esp_partition_iterator_release(it);
+        partitionDetails += "</table>";
+        
+        // Check both partitions for firmware (simplified status for header)
         const esp_partition_t* app0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
         const esp_partition_t* app1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
         
@@ -454,6 +560,7 @@ String CustomOTA::generateOTAPage() {
         <p><strong>Flash Size:</strong> )rawliteral" + String(ESP.getFlashChipSize()) + R"rawliteral( bytes</p>
         <p><strong>SPIFFS Partition:</strong> )rawliteral" + String(hasSpiffsPartition ? "Available" : "Not Available") + R"rawliteral(</p>
         <p><strong>SPIFFS Mount:</strong> )rawliteral" + String(SPIFFS.begin() ? "Mounted" : "Failed") + R"rawliteral(</p>
+        )rawliteral" + partitionDetails + R"rawliteral(
     </div>
     
     <hr>
