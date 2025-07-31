@@ -168,7 +168,7 @@ void CustomOTA::refreshBackupStatus() {
 
 String CustomOTA::generateOTAPage() {
     // Add timestamp for cache busting
-    String timestamp = String(millis());
+    String cotaTimestamp = String(millis());
     
     // Get current partition info
     const esp_partition_t* running_partition = esp_ota_get_running_partition();
@@ -187,9 +187,9 @@ String CustomOTA::generateOTAPage() {
         
         // Check app0 partition
         if (app0) {
-            uint32_t first_word;
-            esp_err_t err = esp_partition_read(app0, 0, &first_word, sizeof(first_word));
-            if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+            uint32_t cotaFirstWord;
+            esp_err_t cotaErr = esp_partition_read(app0, 0, &cotaFirstWord, sizeof(cotaFirstWord));
+            if (cotaErr == ESP_OK && cotaFirstWord != 0xFFFFFFFF) {
                 app0_status = "Has Firmware";
                 if (strcmp(running_partition->label, "app0") == 0) {
                     app0_status += " (Current)";
@@ -199,9 +199,9 @@ String CustomOTA::generateOTAPage() {
         
         // Check app1 partition  
         if (app1) {
-            uint32_t first_word;
-            esp_err_t err = esp_partition_read(app1, 0, &first_word, sizeof(first_word));
-            if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+            uint32_t cotaFirstWord1;
+            esp_err_t cotaErr1 = esp_partition_read(app1, 0, &cotaFirstWord1, sizeof(cotaFirstWord1));
+            if (cotaErr1 == ESP_OK && cotaFirstWord1 != 0xFFFFFFFF) {
                 app1_status = "Has Firmware";
                 if (strcmp(running_partition->label, "app1") == 0) {
                     app1_status += " (Current)";
@@ -507,18 +507,18 @@ String CustomOTA::generateOTAPage() {
     </div>
 
     <script>
-        let selectedFile = null;
-        let updateType = 'firmware';
+        let cotaSelectedFile = null;
+        let cotaUpdateType = 'firmware';
         
         function updateTypeChanged() {
             const selected = document.querySelector('input[name="updateType"]:checked').value;
-            updateType = selected;
+            cotaUpdateType = selected;
             
             const titleElement = document.getElementById('uploadTitle');
             const descElement = document.getElementById('uploadDescription');
             const buttonElement = document.getElementById('uploadBtn');
             
-            if (updateType === 'firmware') {
+            if (cotaUpdateType === 'firmware') {
                 titleElement.textContent = '📁 Select Firmware File';
                 descElement.textContent = 'Click here to browse for your firmware .bin file';
                 buttonElement.textContent = '🚀 Upload';
@@ -529,17 +529,17 @@ String CustomOTA::generateOTAPage() {
             }
             
             // Reset file selection
-            selectedFile = null;
+            cotaSelectedFile = null;
             document.getElementById('updateFile').value = '';
             buttonElement.disabled = true;
         }
         
         function handleFileSelect(input) {
-            const file = input.files[0];
-            if (file && file.name.endsWith('.bin')) {
-                selectedFile = file;
+            const cotaFile = input.files[0];
+            if (cotaFile && cotaFile.name.endsWith('.bin')) {
+                cotaSelectedFile = cotaFile;
                 document.getElementById('uploadBtn').disabled = false;
-                showStatus('File selected: ' + file.name + ' (' + updateType + ' update)', 'info');
+                showStatus('File selected: ' + cotaFile.name + ' (' + cotaUpdateType + ' update)', 'info');
             } else {
                 showStatus('Please select a valid .bin file', 'error');
             }
@@ -558,45 +558,45 @@ String CustomOTA::generateOTAPage() {
         }
         
         function uploadUpdate() {
-            if (!selectedFile) {
+            if (!cotaSelectedFile) {
                 showStatus('Please select a file first', 'error');
                 return;
             }
             
-            const formData = new FormData();
-            formData.append('update', selectedFile);
-            formData.append('type', updateType);
+            const cotaFormData = new FormData();
+            cotaFormData.append('update', cotaSelectedFile);
+            cotaFormData.append('type', cotaUpdateType);
             
-            const xhr = new XMLHttpRequest();
+            const cotaXhr = new XMLHttpRequest();
             
-            xhr.upload.addEventListener('progress', function(e) {
+            cotaXhr.upload.addEventListener('progress', function(e) {
                 if (e.lengthComputable) {
                     const percent = Math.round((e.loaded / e.total) * 100);
                     updateProgress(percent);
                 }
             });
             
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4) {
+            cotaXhr.onreadystatechange = function() {
+                if (cotaXhr.readyState === 4) {
                     document.getElementById('progressContainer').style.display = 'none';
-                    if (xhr.status === 200) {
-                        const updateTypeName = updateType.charAt(0).toUpperCase() + updateType.slice(1);
-                        showStatus(updateTypeName + ' uploaded successfully! Device will reboot automatically.', 'success');
+                    if (cotaXhr.status === 200) {
+                        const cotaUpdateTypeName = cotaUpdateType.charAt(0).toUpperCase() + cotaUpdateType.slice(1);
+                        showStatus(cotaUpdateTypeName + ' uploaded successfully! Device will reboot automatically.', 'success');
                         setTimeout(() => {
                             window.location.reload();
                         }, 3000);
                     } else {
-                        showStatus('Upload failed: ' + xhr.responseText, 'error');
+                        showStatus('Upload failed: ' + cotaXhr.responseText, 'error');
                     }
                 }
             };
             
             document.getElementById('progressContainer').style.display = 'block';
             updateProgress(0);
-            showStatus('Uploading ' + updateType + '...', 'info');
+            showStatus('Uploading ' + cotaUpdateType + '...', 'info');
             
-            xhr.open('POST', '/update/start');
-            xhr.send(formData);
+            cotaXhr.open('POST', '/update/start');
+            cotaXhr.send(cotaFormData);
         }
         
         function rebootDevice() {
@@ -720,10 +720,10 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         // We'll update _hasValidBackup after the upload completes
         
         // Start update process based on type
-        int updateCommand = (_updateType == 0) ? U_FLASH : U_SPIFFS;
-        COTA_DEBUG_PRINTF("CustomOTA: Starting update with command: %d\n", updateCommand);
+        int cotaUpdateCommand = (_updateType == 0) ? U_FLASH : U_SPIFFS;
+        COTA_DEBUG_PRINTF("CustomOTA: Starting update with command: %d\n", cotaUpdateCommand);
         
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN, updateCommand)) {
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, cotaUpdateCommand)) {
             _updateStatus = "Update begin failed";
             _updateInProgress = false;
             COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Update.begin() failed:");
@@ -739,11 +739,11 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
     
     // Write data with error checking
     if (len > 0) {
-        size_t written = Update.write(data, len);
-        if (written != len) {
+        size_t cotaBytesWritten = Update.write(data, len);
+        if (cotaBytesWritten != len) {
             _updateStatus = "Update write failed";
             _updateInProgress = false;
-            COTA_DEBUG_PRINTF("CustomOTA: ERROR - Write failed: attempted %d bytes, wrote %d bytes\n", len, written);
+            COTA_DEBUG_PRINTF("CustomOTA: ERROR - Write failed: attempted %d bytes, wrote %d bytes\n", len, cotaBytesWritten);
             #if CUSTOM_OTA_DEBUG
             Update.printError(Serial);
             #endif
@@ -756,10 +756,10 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         _updateStatus = "Uploading " + updateTypeName + "... " + String(_updateProgress) + "%";
         
         // Print progress every 10%
-        static int lastProgress = -1;
-        if (_updateProgress >= lastProgress + 10) {
+        static int cotaLastProgress = -1;
+        if (_updateProgress >= cotaLastProgress + 10) {
             COTA_DEBUG_PRINTF("CustomOTA: Upload progress: %d%% (%d bytes)\n", _updateProgress, Update.progress());
-            lastProgress = (_updateProgress / 10) * 10;
+            cotaLastProgress = (_updateProgress / 10) * 10;
         }
     }
     
@@ -781,14 +781,14 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             // For firmware updates, ensure partition switch
             if (_updateType == 0) {
                 COTA_DEBUG_PRINTLN("CustomOTA: Firmware update completed, setting boot partition...");
-                const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
-                if (next) {
-                    COTA_DEBUG_PRINTF("CustomOTA: Setting boot partition to: %s\n", next->label);
-                    esp_err_t err = esp_ota_set_boot_partition(next);
-                    if (err == ESP_OK) {
+                const esp_partition_t* cotaNextPartition = esp_ota_get_next_update_partition(NULL);
+                if (cotaNextPartition) {
+                    COTA_DEBUG_PRINTF("CustomOTA: Setting boot partition to: %s\n", cotaNextPartition->label);
+                    esp_err_t cotaSetErr = esp_ota_set_boot_partition(cotaNextPartition);
+                    if (cotaSetErr == ESP_OK) {
                         COTA_DEBUG_PRINTLN("CustomOTA: Boot partition set successfully");
                     } else {
-                        COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to set boot partition: %s\n", esp_err_to_name(err));
+                        COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to set boot partition: %s\n", esp_err_to_name(cotaSetErr));
                     }
                 } else {
                     COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Could not find next update partition");
@@ -931,32 +931,32 @@ bool CustomOTA::restoreFromBackup() {
     COTA_DEBUG_PRINTF("CustomOTA: Backup partition: %s\n", backupPartition.c_str());
     
     // Get current running partition
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    if (!running) {
+    const esp_partition_t* cotaRunningPartition = esp_ota_get_running_partition();
+    if (!cotaRunningPartition) {
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot get current running partition");
         return false;
     }
     
     // Find the backup partition (the other partition)
-    const esp_partition_t* backup_part = NULL;
-    if (strcmp(running->label, "app0") == 0) {
-        backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    const esp_partition_t* cotaBackupPartition = NULL;
+    if (strcmp(cotaRunningPartition->label, "app0") == 0) {
+        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
     } else {
-        backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
     }
     
-    if (!backup_part) {
+    if (!cotaBackupPartition) {
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot find backup partition");
         return false;
     }
     
-    COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s\n", running->label);
-    COTA_DEBUG_PRINTF("CustomOTA: Rollback partition: %s\n", backup_part->label);
+    COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s\n", cotaRunningPartition->label);
+    COTA_DEBUG_PRINTF("CustomOTA: Rollback partition: %s\n", cotaBackupPartition->label);
     
     // Set the backup partition as the boot partition
-    esp_err_t err = esp_ota_set_boot_partition(backup_part);
-    if (err != ESP_OK) {
-        COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to set boot partition: %s\n", esp_err_to_name(err));
+    esp_err_t cotaRollbackErr = esp_ota_set_boot_partition(cotaBackupPartition);
+    if (cotaRollbackErr != ESP_OK) {
+        COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to set boot partition: %s\n", esp_err_to_name(cotaRollbackErr));
         return false;
     }
     

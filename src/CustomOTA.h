@@ -1,7 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
  * 
- * ⚠️  CRITICAL DESIGN REQUIREMENT: NEVER USE delay() ANYWHERE! ⚠️
  * 
  * This library performs real-time operations. Any delay() calls will
  * interfere with critical timing requirements. All functions in this
