@@ -5,6 +5,18 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2025-07-31
+
+### Added
+- **Partition Tables** - Added three pre-configured partition tables for 4MB, 8MB, and 16MB flash
+- **Partition Documentation** - Comprehensive partition setup guide in `partitions/README.md`
+- **Example Configurations** - Updated all examples with correct partition configuration
+- **Enhanced Installation Guide** - Clear step-by-step partition setup instructions
+
+### Fixed
+- **Platform.ini Examples** - All examples now include proper partition configuration
+- **Documentation Clarity** - Emphasized critical partition requirements throughout documentation
+
 ## [2.1.1] - 2025-07-30
 
 ### Changed

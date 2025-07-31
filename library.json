@@ -1,6 +1,6 @@
 {
     "name": "CustomOTA",
-    "version": "2.1.1",
+    "version": "2.2.0",
     "description": "Advanced ESP32 OTA library with dual partition backup system and modern web interface",
     "keywords": [
         "ota",
