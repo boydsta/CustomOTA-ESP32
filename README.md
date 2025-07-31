@@ -3,7 +3,7 @@
 ESP32 Over-The-Air firmware update library with dual partition backup system and modern web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
-![Version](https://img.shields.io/badge/Version-2.2.0-blue.svg)
+![Version](https://img.shields.io/badge/Version-1.0.0-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ## Installation Methods
