@@ -679,6 +679,36 @@ String CustomOTA::generateOTAPage() {
                 return;
             }
             
+            // Show appropriate confirmation dialog based on update type
+            let confirmMessage = '';
+            if (cotaUpdateType === 'firmware') {
+                confirmMessage = `
+
+WARNING: This will REBOOT the device!
+
+• The device will restart automatically
+• Real-time operations will be interrupted
+• Ensure the device is not actively controlling critical systems
+• The update takes about 30-60 seconds total
+
+Continue with firmware update?`;
+            } else {
+                confirmMessage = `
+
+This will NOT reboot the device!
+
+• Web interface files will be updated instantly
+• Device continues normal operation
+• No interruption to real-time functions
+• Just refresh your browser after update
+
+Continue with filesystem update?`;
+            }
+            
+            if (!confirm(confirmMessage)) {
+                return; // User cancelled
+            }
+            
             const cotaFormData = new FormData();
             cotaFormData.append('update', cotaSelectedFile);
             cotaFormData.append('type', cotaUpdateType);
@@ -697,10 +727,19 @@ String CustomOTA::generateOTAPage() {
                     document.getElementById('progressContainer').style.display = 'none';
                     if (cotaXhr.status === 200) {
                         const cotaUpdateTypeName = cotaUpdateType.charAt(0).toUpperCase() + cotaUpdateType.slice(1);
-                        showStatus(cotaUpdateTypeName + ' uploaded successfully! Device will reboot automatically.', 'success');
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 3000);
+                        
+                        // Show appropriate success message based on update type
+                        if (cotaUpdateType === 'firmware') {
+                            showStatus(cotaUpdateTypeName + ' uploaded successfully! Device is rebooting...', 'success');
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 5000); // Longer timeout for reboot
+                        } else {
+                            showStatus(cotaUpdateTypeName + ' uploaded successfully! Web interface updated - refresh browser to see changes.', 'success');
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 2000); // Shorter timeout for filesystem
+                        }
                     } else {
                         showStatus('Upload failed: ' + cotaXhr.responseText, 'error');
                     }
@@ -812,22 +851,52 @@ void CustomOTA::handleUpdateStart(AsyncWebServerRequest *request) {
 }
 
 void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-    // Add debugging to understand the timing issue
+    // Check if this is the very first chunk (index = 0) and initialize if needed
+    if (index == 0 && !_updateInProgress) {
+        COTA_DEBUG_PRINTLN("CustomOTA: EMERGENCY INIT - First chunk received, initializing update state");
+        
+        // Get update type from request parameters - try both POST params and URL params
+        _updateType = 0; // Default to firmware
+        
+        // Check POST parameters first (multipart form data)
+        if (request->hasParam("type", true)) {
+            String type = request->getParam("type", true)->value();
+            if (type == "filesystem") {
+                _updateType = 1;
+            }
+            COTA_DEBUG_PRINTF("CustomOTA: Found type in POST params: %s\n", type.c_str());
+        }
+        // Fallback to URL parameters
+        else if (request->hasParam("type", false)) {
+            String type = request->getParam("type", false)->value();
+            if (type == "filesystem") {
+                _updateType = 1;
+            }
+            COTA_DEBUG_PRINTF("CustomOTA: Found type in URL params: %s\n", type.c_str());
+        }
+        // Additional check - look at filename for hints
+        else if (filename.indexOf("filesystem") >= 0 || filename.indexOf("spiffs") >= 0) {
+            _updateType = 1;
+            COTA_DEBUG_PRINTLN("CustomOTA: Detected filesystem update from filename");
+        }
+        else {
+            COTA_DEBUG_PRINTLN("CustomOTA: No type parameter found, defaulting to firmware");
+        }
+        
+        // Initialize update state immediately
+        _updateInProgress = true;
+        _updateProgress = 0;
+        _updateStatus = "Starting " + String(_updateType == 0 ? "firmware" : "filesystem") + " update...";
+        
+        COTA_DEBUG_PRINTF("CustomOTA: Emergency init complete - Type: %s\n", _updateType == 0 ? "firmware" : "filesystem");
+    }
+    
+    // Now proceed with normal upload handling
     if (!_updateInProgress) {
         COTA_DEBUG_PRINTF("CustomOTA: DEBUG - Upload received but _updateInProgress=%s, index=%d, len=%d\n", 
                      _updateInProgress ? "true" : "false", index, len);
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Upload received but no update in progress");
-        
-        // Emergency state fix - if this is the start of an upload (index==0), try to initialize
-        if (index == 0) {
-            COTA_DEBUG_PRINTLN("CustomOTA: EMERGENCY - Attempting to initialize update state");
-            _updateInProgress = true;
-            _updateProgress = 0;
-            _updateType = 0; // Default to firmware
-            _updateStatus = "Emergency recovery - starting firmware update...";
-        } else {
-            return; // Skip this chunk if we can't recover
-        }
+        return; // Skip this chunk
     }
     
     if (index == 0) {
@@ -899,8 +968,9 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             COTA_DEBUG_PRINTLN("CustomOTA: Saving update info...");
             saveUpdateInfo();
             
-            // For firmware updates, ensure partition switch
+            // Handle different update types differently
             if (_updateType == 0) {
+                // Firmware update - requires reboot to switch partitions
                 COTA_DEBUG_PRINTLN("CustomOTA: Firmware update completed, setting boot partition...");
                 const esp_partition_t* cotaNextPartition = esp_ota_get_next_update_partition(NULL);
                 if (cotaNextPartition) {
@@ -914,15 +984,29 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                 } else {
                     COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Could not find next update partition");
                 }
+                
+                // Schedule reboot for firmware updates
+                request->send(200, "text/plain", "Firmware update completed. Rebooting in 3 seconds...");
+                _restartPending = true;
+                _restartTime = millis() + 3000;
+                COTA_DEBUG_PRINTLN("CustomOTA: Firmware update - restart scheduled for 3 seconds");
+            } else {
+                // SPIFFS filesystem update - just remount, no reboot needed
+                COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS update completed, remounting filesystem...");
+                
+                // Remount SPIFFS to pick up new files
+                SPIFFS.end();
+                if (SPIFFS.begin(true)) {
+                    COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS remounted successfully - new files available");
+                    request->send(200, "text/plain", "Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
+                } else {
+                    COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS remount failed, may need manual reboot");
+                    request->send(200, "text/plain", "Filesystem update completed but remount failed. Please reboot device manually if web interface issues occur.");
+                }
+                
+                // No restart needed for SPIFFS updates
+                COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS update complete - no reboot required");
             }
-            
-            // Schedule reboot without blocking - use deferred restart
-            request->send(200, "text/plain", "Update completed. Rebooting in 3 seconds...");
-            
-            // Set restart flag for main loop to handle
-            _restartPending = true;
-            _restartTime = millis() + 3000; // 3 seconds to allow response to be sent and user to see message
-            COTA_DEBUG_PRINTLN("CustomOTA: Restart scheduled for 3 seconds");
             COTA_DEBUG_PRINTLN("==========================================");
         } else {
             _updateStatus = "Update failed";
