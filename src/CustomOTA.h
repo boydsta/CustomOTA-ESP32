@@ -85,10 +85,13 @@ private:
     bool restoreFromBackup();
     void saveUpdateInfo();
     void loadUpdateInfo();
+    
+    // SPIFFS partition checking
+    bool checkSpiffsPartition();
 
 public:
     CustomOTA();
-    void begin(AsyncWebServer* server, const char* username = "", const char* password = "");
+    void begin(AsyncWebServer* server, const char* username, const char* password);
     void begin(AsyncWebServer* server); // No authentication version
     void setCredentials(const char* username, const char* password);
     void setFirmwareVersion(const char* version);

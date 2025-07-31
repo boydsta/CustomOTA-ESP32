@@ -170,6 +170,9 @@ String CustomOTA::generateOTAPage() {
     // Add timestamp for cache busting
     String cotaTimestamp = String(millis());
     
+    // Check if SPIFFS partition exists
+    bool hasSpiffsPartition = checkSpiffsPartition();
+    
     // Get current partition info
     const esp_partition_t* running_partition = esp_ota_get_running_partition();
     String partitionInfo = "Unknown";
@@ -449,7 +452,8 @@ String CustomOTA::generateOTAPage() {
         <p><strong>Partition Status:</strong> )rawliteral" + partitionStatus + R"rawliteral(</p>
         <p><strong>Free Heap:</strong> <span id="freeHeap">)rawliteral" + String(ESP.getFreeHeap()) + R"rawliteral(</span> bytes</p>
         <p><strong>Flash Size:</strong> )rawliteral" + String(ESP.getFlashChipSize()) + R"rawliteral( bytes</p>
-        <p><strong>SPIFFS Status:</strong> )rawliteral" + String(SPIFFS.begin() ? "Available" : "Not Available") + R"rawliteral(</p>
+        <p><strong>SPIFFS Partition:</strong> )rawliteral" + String(hasSpiffsPartition ? "Available" : "Not Available") + R"rawliteral(</p>
+        <p><strong>SPIFFS Mount:</strong> )rawliteral" + String(SPIFFS.begin() ? "Mounted" : "Failed") + R"rawliteral(</p>
     </div>
     
     <hr>
@@ -460,11 +464,21 @@ String CustomOTA::generateOTAPage() {
             <label>
                 <input type="radio" name="updateType" value="firmware" checked onchange="updateTypeChanged()"> 
                 <strong>Firmware Update</strong> - Update the main application code (.bin file)
-            </label>
+            </label>)rawliteral" + 
+            
+            (hasSpiffsPartition ? 
+                R"rawliteral(
             <label>
                 <input type="radio" name="updateType" value="filesystem" onchange="updateTypeChanged()"> 
                 <strong>Filesystem Update</strong> - Update web files, data, and configuration (filesystem.bin file)
-            </label>
+            </label>)rawliteral" : 
+                R"rawliteral(
+            <label style="color: #666; font-style: italic;">
+                <input type="radio" name="updateType" value="filesystem" disabled> 
+                <strong>Filesystem Update</strong> - Not available (no SPIFFS partition found)
+            </label>)rawliteral") + 
+            
+            R"rawliteral(
         </div>
     </div>
     
@@ -1064,4 +1078,10 @@ void CustomOTA::handle() {
     
     // This function completes in microseconds - maintains real-time compatibility
     // All time-sensitive operations use deferred/scheduled approaches
+}
+
+bool CustomOTA::checkSpiffsPartition() {
+    // Check if SPIFFS partition exists in the partition table
+    const esp_partition_t* spiffs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+    return (spiffs_partition != NULL);
 }
