@@ -235,7 +235,7 @@ String CustomOTA::generateOTAPage() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Over The Air Update</title>
-    <link rel="stylesheet" href="/styles.css?v=)rawliteral" + timestamp + R"rawliteral(">
+    <link rel="stylesheet" href="/styles.css?v=)rawliteral" + cotaTimestamp + R"rawliteral(">
     <style>
         /* Base styles - fallback if external CSS fails */
         body {
@@ -435,15 +435,11 @@ String CustomOTA::generateOTAPage() {
     </style>
 </head>
 <body>
-    <nav class="button-container">
-        <a href="/index.html" class="button">Home screen</a>
-        <a href="/mainsettings.html" class="button">Main Settings</a>
-        <a href="/divertsettings.html" class="button">Divert Settings</a>
-        <a href="/auxilarysettings.html" class="button">Auxiliary Settings</a>
-        <a href="/update" class="button">OTA Update</a>
-    </nav>
+    <div class="button-container">
+        <button class="button" onclick="window.location.href='/'">🏠 Home</button>
+    </div>
     
-    <h1>OTA Update</h1>
+    <h1>🔄 CustomOTA Update</h1>
     
     <div class="full-width-box">
         <h2>System Information</h2>

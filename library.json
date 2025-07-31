@@ -48,10 +48,17 @@
         "include": [
             "src/*",
             "examples/*",
+            "partitions/*",
             "*.md",
             "*.txt",
             "library.*",
             "LICENSE"
+        ],
+        "exclude": [
+            "examples/*/.pio",
+            "examples/*/.vscode", 
+            "examples/*/build",
+            "**/.git*"
         ]
     }
 }
