@@ -763,9 +763,8 @@ String CustomOTA::generateOTAPage() {
 
     <hr>
     
-    <div class="full-width-box">
-        )rawliteral" + partitionDetails + R"rawliteral(
-    </div>
+    )rawliteral" + partitionDetails + R"rawliteral(
+
 </body>
 </html>
 )rawliteral";
