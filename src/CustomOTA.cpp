@@ -1122,8 +1122,12 @@ bool CustomOTA::restoreFromBackup() {
         // Try to reload backup info
         loadUpdateInfo();
         if (!_hasValidBackup) {
-            COTA_DEBUG_PRINTLN("CustomOTA: No backup metadata found in preferences");
-            return false;
+            COTA_DEBUG_PRINTLN("CustomOTA: No backup metadata found, attempting forced auto-detection...");
+            // Force backup detection for immediate fix
+            if (!autoDetectBackup()) {
+                COTA_DEBUG_PRINTLN("CustomOTA: Auto-detection failed - no backup firmware found");
+                return false;
+            }
         }
     }
     
@@ -1178,6 +1182,21 @@ bool CustomOTA::restoreFromBackup() {
 }
 
 void CustomOTA::saveUpdateInfo() {
+    // Get current running partition before the update (this becomes the backup)
+    const esp_partition_t* currentPartition = esp_ota_get_running_partition();
+    if (currentPartition) {
+        // Save the current firmware as backup info BEFORE switching partitions
+        _prefs.putString("backup_ver", _firmwareVersion.length() > 0 ? _firmwareVersion : "Previous Firmware");
+        _prefs.putString("backup_part", String(currentPartition->label));
+        _prefs.putString("backup_valid", "YES");
+        _prefs.putUInt("backup_size", currentPartition->size);
+        
+        COTA_DEBUG_PRINTF("CustomOTA: Saved backup info - Version: %s, Partition: %s\n", 
+                         _firmwareVersion.c_str(), currentPartition->label);
+        COTA_DEBUG_PRINTLN("CustomOTA: Previous firmware preserved as backup for rollback");
+    }
+    
+    // Also save the update timestamp
     _prefs.putString("last_update", _firmwareVersion);
     _prefs.putULong("update_time", millis());
 }
@@ -1233,6 +1252,59 @@ void CustomOTA::loadUpdateInfo() {
         _hasValidBackup = false;
         COTA_DEBUG_PRINTLN("CustomOTA: No previous backup (first run or backup cleared)");
     }
+    
+    // If no backup found in preferences, try auto-detection
+    if (!_hasValidBackup) {
+        COTA_DEBUG_PRINTLN("CustomOTA: No backup metadata found, attempting auto-detection...");
+        autoDetectBackup();
+    }
+}
+
+bool CustomOTA::autoDetectBackup() {
+    // Get current running partition
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (!running) {
+        COTA_DEBUG_PRINTLN("CustomOTA: Auto-detect failed - cannot get running partition");
+        return false;
+    }
+    
+    // Find the other partition
+    const esp_partition_t* other = NULL;
+    if (strcmp(running->label, "app0") == 0) {
+        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    } else {
+        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    }
+    
+    if (!other) {
+        COTA_DEBUG_PRINTLN("CustomOTA: Auto-detect failed - cannot find other partition");
+        return false;
+    }
+    
+    // Check if other partition has firmware (check first 4 bytes for ESP32 image header)
+    uint32_t first_word = 0xFFFFFFFF;
+    esp_err_t err = esp_partition_read(other, 0, &first_word, sizeof(first_word));
+    
+    if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+        // Other partition has firmware - we have a backup!
+        COTA_DEBUG_PRINTF("CustomOTA: Auto-detected backup firmware in %s partition\n", other->label);
+        COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n", running->label, other->label);
+        
+        // Save this info for future use
+        _prefs.putString("backup_part", String(other->label));
+        _prefs.putString("backup_valid", "YES");
+        _prefs.putString("backup_ver", "Previous Firmware (auto-detected)");
+        _prefs.putUInt("backup_size", other->size);
+        
+        _hasValidBackup = true;
+        _backupSize = other->size;
+        
+        COTA_DEBUG_PRINTLN("CustomOTA: Auto-detection successful - backup metadata saved");
+        return true;
+    }
+    
+    COTA_DEBUG_PRINTF("CustomOTA: Auto-detect - other partition (%s) is empty or invalid\n", other->label);
+    return false;
 }
 
 void CustomOTA::checkRestart() {

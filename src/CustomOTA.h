@@ -83,6 +83,7 @@ private:
     // Backup management
     bool createBackup();
     bool restoreFromBackup();
+    bool autoDetectBackup();
     void saveUpdateInfo();
     void loadUpdateInfo();
     
