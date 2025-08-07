@@ -75,6 +75,16 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     _server = server;
     _authenticated = false; // Default to no authentication
     
+    COTA_DEBUG_PRINTLN("==========================================");
+    COTA_DEBUG_PRINTF("CustomOTA Library v%s\n", CUSTOMOTA_VERSION_STRING);
+    COTA_DEBUG_PRINTF("Build: %s %s\n", CUSTOMOTA_BUILD_DATE, CUSTOMOTA_BUILD_TIME);
+    COTA_DEBUG_PRINTF("Features: Firmware=%s, Filesystem=%s, AutoBackup=%s, RealTime=%s\n",
+                       CUSTOMOTA_SUPPORT_DUAL_PARTITION ? "Yes" : "No",
+                       CUSTOMOTA_SUPPORT_FILESYSTEM_UPDATE ? "Yes" : "No", 
+                       CUSTOMOTA_SUPPORT_AUTO_BACKUP_DETECTION ? "Yes" : "No",
+                       CUSTOMOTA_SUPPORT_REALTIME_OPERATIONS ? "Yes" : "No");
+    COTA_DEBUG_PRINTLN("==========================================");
+    
     if (username != nullptr && password != nullptr && strlen(username) > 0 && strlen(password) > 0) {
         setCredentials(username, password);
         _authenticated = true;
