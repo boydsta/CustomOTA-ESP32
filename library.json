@@ -1,18 +1,21 @@
 {
     "name": "CustomOTA",
-    "version": "1.0.0",
-    "description": "Advanced ESP32 OTA library with dual partition backup system and modern web interface",
+    "version": "1.2.0",
+    "description": "Real-time compatible ESP32 OTA library with automatic backup detection, dual partition support, and filesystem updates",
     "keywords": [
         "ota",
         "esp32",
         "update",
         "firmware",
+        "filesystem",
+        "spiffs",
         "web",
         "rollback",
         "backup",
         "partition",
         "real-time",
-        "async"
+        "async",
+        "auto-detection"
     ],
     "repository": {
         "type": "git",

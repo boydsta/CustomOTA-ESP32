@@ -1,6 +1,38 @@
 /*
  * CustomOTA Library Header for ESP32
+ * Version: 1.2.0
  * 
+ * Author: Boyd Benton
+ * Created: 2025
+ * Last Updated: August 2025
+ * 
+ * Features:
+ * - Dual firmware/filesystem OTA updates
+ * - Automatic backup detection and rollback
+ * - ESP32 dual partition support
+ * - Real-time operation compatibility
+ * - SPIFFS filesystem updates
+ * - Web-based update interface
+ * - Authentication support
+ * - Progress tracking and status reporting
+ * 
+ * Version History:
+ * v1.2.0 (August 2025):
+ *   - Added automatic backup detection
+ *   - Enhanced rollback functionality
+ *   - Improved serial upload → OTA workflow compatibility
+ *   - Better partition table analysis
+ *   - Force backup detection for edge cases
+ * 
+ * v1.1.0:
+ *   - Added filesystem (SPIFFS) update support
+ *   - Enhanced partition table display
+ *   - Improved error handling and debug output
+ * 
+ * v1.0.0:
+ *   - Initial release with firmware OTA updates
+ *   - Basic rollback functionality
+ *   - Real-time compatibility design
  * 
  * This library performs real-time operations. Any delay() calls will
  * interfere with critical timing requirements. All functions in this
@@ -24,6 +56,20 @@
 
 #ifndef CUSTOMOTA_H
 #define CUSTOMOTA_H
+
+// Library version information
+#define CUSTOMOTA_VERSION_MAJOR 1
+#define CUSTOMOTA_VERSION_MINOR 2
+#define CUSTOMOTA_VERSION_PATCH 0
+#define CUSTOMOTA_VERSION_STRING "1.2.0"
+#define CUSTOMOTA_BUILD_DATE __DATE__
+#define CUSTOMOTA_BUILD_TIME __TIME__
+
+// Feature flags
+#define CUSTOMOTA_SUPPORT_FILESYSTEM_UPDATE 1
+#define CUSTOMOTA_SUPPORT_AUTO_BACKUP_DETECTION 1
+#define CUSTOMOTA_SUPPORT_DUAL_PARTITION 1
+#define CUSTOMOTA_SUPPORT_REALTIME_OPERATIONS 1
 
 #include <WiFi.h>
 #include <AsyncTCP.h>
@@ -98,6 +144,19 @@ public:
     void setFirmwareVersion(const char* version);
     void setHardwareID(const char* id);
     void setBuildTimestamp(const char* timestamp);
+    
+    // Version information functions
+    static String getLibraryVersion() { return String(CUSTOMOTA_VERSION_STRING); }
+    static int getVersionMajor() { return CUSTOMOTA_VERSION_MAJOR; }
+    static int getVersionMinor() { return CUSTOMOTA_VERSION_MINOR; }
+    static int getVersionPatch() { return CUSTOMOTA_VERSION_PATCH; }
+    static String getBuildInfo() { return String(CUSTOMOTA_BUILD_DATE) + " " + String(CUSTOMOTA_BUILD_TIME); }
+    
+    // Feature availability checks
+    static bool supportsFilesystemUpdate() { return CUSTOMOTA_SUPPORT_FILESYSTEM_UPDATE; }
+    static bool supportsAutoBackupDetection() { return CUSTOMOTA_SUPPORT_AUTO_BACKUP_DETECTION; }
+    static bool supportsDualPartition() { return CUSTOMOTA_SUPPORT_DUAL_PARTITION; }
+    static bool supportsRealtimeOperations() { return CUSTOMOTA_SUPPORT_REALTIME_OPERATIONS; }
     
     // Call this after setFirmwareVersion to refresh backup status
     void refreshBackupStatus();
