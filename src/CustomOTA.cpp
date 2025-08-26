@@ -1,3 +1,8 @@
+// Helper to check for otadata partition
+bool hasOtaDataPartition() {
+    const esp_partition_t* otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
+    return (otadata != NULL);
+}
 /*
  * CustomOTA Library for ESP32
  * 
@@ -18,7 +23,19 @@
  */
 
 #include "CustomOTA.h"
+#include <esp_partition.h>
 
+
+
+bool isSingleOtaPartition = false;
+void detectOtaPartitionMode() {
+    int count = 0;
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    if (it) { count++; esp_partition_iterator_release(it); }
+    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    if (it) { count++; esp_partition_iterator_release(it); }
+    isSingleOtaPartition = (count < 2);
+}
 // Helper function to format build date from __DATE__ to dd/mm/yyyy format
 String formatBuildDate() {
     String date = __DATE__;  // Format: "Jul 30 2025"
@@ -74,6 +91,14 @@ CustomOTA::CustomOTA() {
 void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* password) {
     _server = server;
     _authenticated = false; // Default to no authentication
+
+    // Detect partition mode before anything else
+    int count = 0;
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    if (it) { count++; esp_partition_iterator_release(it); }
+    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    if (it) { count++; esp_partition_iterator_release(it); }
+    isSingleOtaPartition = (count < 2);
     
     COTA_DEBUG_PRINTLN("==========================================");
     COTA_DEBUG_PRINTF("CustomOTA Library v%s\n", CUSTOMOTA_VERSION_STRING);
@@ -614,19 +639,21 @@ String CustomOTA::generateOTAPage() {
     <div class="button-container">
         <button class="grey-button" id="uploadBtn" onclick="uploadUpdate()" disabled>
             🚀 Upload
-        </button>)rawliteral" + 
-        
-        (_hasValidBackup ? 
-            R"rawliteral(
+        </button>)rawliteral"
+        + (
+            (isSingleOtaPartition || !hasOtaDataPartition())
+            ? String("")
+            : (_hasValidBackup ?
+                R"rawliteral(
         <button class="grey-button" onclick="rollbackFirmware()">
             ⏪ Rollback
-        </button>)rawliteral" : 
-            R"rawliteral(
+        </button>)rawliteral"
+                : R"rawliteral(
         <button class="grey-button" onclick="alert('Rollback functionality available - ESP32 dual partition system automatically preserves previous firmware')" title="ESP32 dual partition system automatically preserves previous firmware - rollback available when other partition has valid firmware">
             � Enable Rollback
-        </button>)rawliteral") + 
-        
-        R"rawliteral(
+        </button>)rawliteral")
+        )
+        + R"rawliteral(
         <button class="grey-button" onclick="rebootDevice()">
             🔄 Reboot
         </button>
