@@ -580,7 +580,7 @@ String CustomOTA::generateOTAPage() {
 </head>
 <body>
     <div class="button-container">
-        <button class="button" onclick="window.location.href='/'">🏠 Home</button>
+        <button class="button" onclick="window.location.href='/'">Home</button>
     </div>
     
     <h1>🔄 CustomOTA Update</h1>
