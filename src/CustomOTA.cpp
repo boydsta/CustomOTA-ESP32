@@ -1,8 +1,4 @@
-// Helper to check for otadata partition
-bool hasOtaDataPartition() {
-    const esp_partition_t* otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, NULL);
-    return (otadata != NULL);
-}
+
 /*
  * CustomOTA Library for ESP32
  * 
@@ -25,14 +21,18 @@ bool hasOtaDataPartition() {
 #include "CustomOTA.h"
 #include <esp_partition.h>
 
-
+// Helper to check for otadata partition
+bool hasOtaDataPartition() {
+    const esp_partition_t* otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, nullptr);
+    return (otadata != nullptr);
+}
 
 bool isSingleOtaPartition = false;
 void detectOtaPartitionMode() {
     int count = 0;
-    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
     if (it) { count++; esp_partition_iterator_release(it); }
-    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
     if (it) { count++; esp_partition_iterator_release(it); }
     isSingleOtaPartition = (count < 2);
 }
@@ -94,9 +94,9 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
 
     // Detect partition mode before anything else
     int count = 0;
-    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
     if (it) { count++; esp_partition_iterator_release(it); }
-    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
     if (it) { count++; esp_partition_iterator_release(it); }
     isSingleOtaPartition = (count < 2);
     
@@ -230,9 +230,9 @@ String CustomOTA::generateOTAPage() {
         partitionDetails += "</tr>";
         
         // Iterate through all partitions
-        esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+        esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
         
-        while (it != NULL) {
+        while (it != nullptr) {
             const esp_partition_t* part = esp_partition_get(it);
             if (part) {
                 String typeStr = "";
@@ -323,8 +323,8 @@ String CustomOTA::generateOTAPage() {
         partitionDetails += "</table>";
         
         // Check both partitions for firmware (simplified status for header)
-        const esp_partition_t* app0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
-        const esp_partition_t* app1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+        const esp_partition_t* app0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+        const esp_partition_t* app1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
         
         String app0_status = "Empty";
         String app1_status = "Empty";
@@ -356,7 +356,7 @@ String CustomOTA::generateOTAPage() {
         partitionStatus = "app0: " + app0_status + ", app1: " + app1_status;
         
         // Set backup status based on other partition having firmware
-        const esp_partition_t* other_partition = NULL;
+        const esp_partition_t* other_partition = nullptr;
         if (strcmp(running_partition->label, "app0") == 0) {
             other_partition = app1;
         } else {
@@ -1009,7 +1009,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             if (_updateType == 0) {
                 // Firmware update - requires reboot to switch partitions
                 COTA_DEBUG_PRINTLN("CustomOTA: Firmware update completed, setting boot partition...");
-                const esp_partition_t* cotaNextPartition = esp_ota_get_next_update_partition(NULL);
+                const esp_partition_t* cotaNextPartition = esp_ota_get_next_update_partition(nullptr);
                 if (cotaNextPartition) {
                     COTA_DEBUG_PRINTF("CustomOTA: Setting boot partition to: %s\n", cotaNextPartition->label);
                     esp_err_t cotaSetErr = esp_ota_set_boot_partition(cotaNextPartition);
@@ -1184,11 +1184,11 @@ bool CustomOTA::restoreFromBackup() {
     }
     
     // Find the backup partition (the other partition)
-    const esp_partition_t* cotaBackupPartition = NULL;
+    const esp_partition_t* cotaBackupPartition = nullptr;
     if (strcmp(cotaRunningPartition->label, "app0") == 0) {
-        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
     } else {
-        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
     }
     
     if (!cotaBackupPartition) {
@@ -1252,14 +1252,14 @@ void CustomOTA::loadUpdateInfo() {
         if (backupVersion.length() > 0 && backupPartition.length() > 0 && backupValid == "YES") {
             // Additional validation: ensure the backup partition exists and is different from current
             const esp_partition_t* current = esp_ota_get_running_partition();
-            const esp_partition_t* backup_part = NULL;
+            const esp_partition_t* backup_part = nullptr;
             
             if (current && strcmp(current->label, backupPartition.c_str()) != 0) {
                 // Find the backup partition
                 if (strcmp(backupPartition.c_str(), "app0") == 0) {
-                    backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+                    backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
                 } else if (strcmp(backupPartition.c_str(), "app1") == 0) {
-                    backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+                    backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
                 }
                 
                 if (backup_part) {
@@ -1306,11 +1306,11 @@ bool CustomOTA::autoDetectBackup() {
     }
     
     // Find the other partition
-    const esp_partition_t* other = NULL;
+    const esp_partition_t* other = nullptr;
     if (strcmp(running->label, "app0") == 0) {
-        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
     } else {
-        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL);
+        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
     }
     
     if (!other) {
@@ -1386,6 +1386,6 @@ void CustomOTA::handle() {
 
 bool CustomOTA::checkSpiffsPartition() {
     // Check if SPIFFS partition exists in the partition table
-    const esp_partition_t* spiffs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
-    return (spiffs_partition != NULL);
+    const esp_partition_t* spiffs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
+    return (spiffs_partition != nullptr);
 }

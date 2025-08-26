@@ -78,6 +78,7 @@
 #include <SPIFFS.h>
 #include <Preferences.h>
 #include <esp_ota_ops.h>
+#include <esp_partition.h>
 
 // Debug macros - controlled by CUSTOM_OTA_DEBUG build flag
 #if CUSTOM_OTA_DEBUG
