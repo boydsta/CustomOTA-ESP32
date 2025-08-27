@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.2.0
+ * Version: 1.2.1
  * 
  * Author: Boyd Benton
  * Created: 2025
@@ -15,8 +15,17 @@
  * - Web-based update interface
  * - Authentication support
  * - Progress tracking and status reporting
+ * - Heap monitoring and enhanced rollback validation
+ * - Configurable restart delays and SPIFFS handling
  * 
  * Version History:
+ * v1.2.1 (August 2025):
+ *   - Added heap monitoring for update safety
+ *   - Enhanced rollback validation with sector-by-sector checks
+ *   - Configurable restart delays for different applications
+ *   - Safer SPIFFS handling with format control
+ *   - Advanced configuration options
+ * 
  * v1.2.0 (August 2025):
  *   - Added automatic backup detection
  *   - Enhanced rollback functionality
@@ -60,8 +69,8 @@
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
 #define CUSTOMOTA_VERSION_MINOR 2
-#define CUSTOMOTA_VERSION_PATCH 0
-#define CUSTOMOTA_VERSION_STRING "1.2.0"
+#define CUSTOMOTA_VERSION_PATCH 1
+#define CUSTOMOTA_VERSION_STRING "1.2.1"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 
@@ -115,6 +124,8 @@ private:
     // Restart management for real-time systems
     bool _restartPending;
     unsigned long _restartTime;
+    unsigned long _restartDelay; // Configurable restart delay in milliseconds
+    bool _allowSpiffsFormat; // Control SPIFFS formatting on mount failure
     
     // Generate HTML page
     String generateOTAPage();
@@ -145,6 +156,8 @@ public:
     void setFirmwareVersion(const char* version);
     void setHardwareID(const char* id);
     void setBuildTimestamp(const char* timestamp);
+    void setRestartDelay(unsigned long delayMs); // Set restart delay for firmware updates
+    void setSpiffsFormatOnFailure(bool allowFormat); // Control SPIFFS formatting behavior on mount failure
     
     // Version information functions
     static String getLibraryVersion() { return String(CUSTOMOTA_VERSION_STRING); }

@@ -18,7 +18,7 @@
  * Maintains real-time compatibility throughout all operations
  */
 
-#include "CustomOTA.h"
+#include "CustomOTA.h"yes
 #include <esp_partition.h>
 
 // Helper to check for otadata partition
@@ -83,6 +83,8 @@ CustomOTA::CustomOTA() {
     _updateType = 0; // Default to firmware
     _restartPending = false;
     _restartTime = 0;
+    _restartDelay = 3000; // Default 3 seconds
+    _allowSpiffsFormat = true; // Default to allowing format for compatibility
     
     // Set default build timestamp in dd/mm/yyyy format (will be overridden if setBuildTimestamp is called)
     _buildTimestamp = formatBuildDate();
@@ -120,12 +122,27 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         COTA_DEBUG_PRINTLN("CustomOTA: No authentication (open access)");
     }
     
-    // Initialize SPIFFS for filesystem updates
-    COTA_DEBUG_PRINTLN("CustomOTA: Initializing SPIFFS...");
-    if (!SPIFFS.begin(true)) {
-        COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS Mount Failed - filesystem updates will not be available");
+    // Initialize SPIFFS for filesystem updates (only if not already initialized)
+    COTA_DEBUG_PRINTLN("CustomOTA: Checking SPIFFS status...");
+    if (!SPIFFS.begin(false)) {
+        COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS mount failed");
+        
+        if (_allowSpiffsFormat) {
+            COTA_DEBUG_PRINTLN("CustomOTA: Attempting SPIFFS format and remount...");
+            // Try to format SPIFFS only if it's truly corrupted/unusable
+            // This preserves user data in normal operation scenarios
+            if (SPIFFS.format() && SPIFFS.begin(false)) {
+                COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS formatted and mounted successfully");
+                COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS was corrupted and has been formatted (user data may be lost)");
+            } else {
+                COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS format failed - filesystem updates unavailable");
+            }
+        } else {
+            COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS format disabled - filesystem updates unavailable");
+            COTA_DEBUG_PRINTLN("CustomOTA: Use setSpiffsFormatOnFailure(true) to enable automatic formatting");
+        }
     } else {
-        COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS initialized successfully");
+        COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS already mounted by main application");
     }
     
     // Initialize preferences
@@ -194,6 +211,16 @@ void CustomOTA::setHardwareID(const char* id) {
 
 void CustomOTA::setBuildTimestamp(const char* timestamp) {
     _buildTimestamp = String(timestamp);
+}
+
+void CustomOTA::setRestartDelay(unsigned long delayMs) {
+    _restartDelay = delayMs;
+    COTA_DEBUG_PRINTF("CustomOTA: Restart delay set to %lu ms\n", delayMs);
+}
+
+void CustomOTA::setSpiffsFormatOnFailure(bool allowFormat) {
+    _allowSpiffsFormat = allowFormat;
+    COTA_DEBUG_PRINTF("CustomOTA: SPIFFS format on failure set to: %s\n", allowFormat ? "enabled" : "disabled");
 }
 
 void CustomOTA::refreshBackupStatus() {
@@ -941,8 +968,25 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         COTA_DEBUG_PRINTF("CustomOTA: Update Start: %s (%s)\n", filename.c_str(), _updateType == 0 ? "firmware" : "filesystem");
         COTA_DEBUG_PRINTF("CustomOTA: Free heap before update: %d bytes\n", ESP.getFreeHeap());
         
-        // Check if other partition has valid firmware (ESP32 automatic backup)
-        COTA_DEBUG_PRINTLN("CustomOTA: Checking ESP32 dual partition backup status...");
+        // Check available heap before starting update
+        size_t freeHeap = ESP.getFreeHeap();
+        size_t minHeapRequired = 32768; // 32KB minimum for OTA operations
+        
+        COTA_DEBUG_PRINT("CustomOTA: Available heap: ");
+        COTA_DEBUG_PRINT(freeHeap);
+        COTA_DEBUG_PRINTLN(" bytes");
+        
+        if (freeHeap < minHeapRequired) {
+            _updateStatus = "Insufficient memory for update";
+            _updateInProgress = false;
+            COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Insufficient heap for OTA update");
+            COTA_DEBUG_PRINTLN("==========================================");
+            request->send(500, "text/plain", "Insufficient memory for update");
+            return;
+        }
+        
+        // Proceed with update if heap is sufficient
+        COTA_DEBUG_PRINTLN("CustomOTA: Starting firmware update...");
         // The ESP32 OTA system automatically preserves firmware on the inactive partition
         // We'll update _hasValidBackup after the upload completes
         
@@ -1022,11 +1066,10 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                     COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Could not find next update partition");
                 }
                 
-                // Schedule reboot for firmware updates
-                request->send(200, "text/plain", "Firmware update completed. Rebooting in 3 seconds...");
-                _restartPending = true;
-                _restartTime = millis() + 3000;
-                COTA_DEBUG_PRINTLN("CustomOTA: Firmware update - restart scheduled for 3 seconds");
+                // Immediate reboot for firmware updates
+                request->send(200, "text/plain", "Firmware update completed. Rebooting now...");
+                COTA_DEBUG_PRINTLN("CustomOTA: Firmware update - rebooting immediately");
+                ESP.restart();
             } else {
                 // SPIFFS filesystem update - just remount, no reboot needed
                 COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS update completed, remounting filesystem...");
@@ -1059,8 +1102,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
 }
 
 void CustomOTA::handleReboot(AsyncWebServerRequest *request) {
-    // REAL-TIME CRITICAL: NO delay() calls allowed!
-    // Uses deferred restart mechanism to maintain real-time operations
+    // REAL-TIME CRITICAL: Immediate reboot for reliability
     
     if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
         return request->requestAuthentication();
@@ -1070,10 +1112,9 @@ void CustomOTA::handleReboot(AsyncWebServerRequest *request) {
     COTA_DEBUG_PRINTLN("CustomOTA: Manual reboot requested");
     request->send(200, "text/plain", "Rebooting device...");
     
-    // IMPORTANT: Use deferred restart - NO blocking delay() calls!
-    // This allows real-time operations to continue for 2 more seconds
-    _restartPending = true;
-    _restartTime = millis() + 2000; // Non-blocking deferred restart timing
+    // Immediate reboot for reliability
+    COTA_DEBUG_PRINTLN("CustomOTA: REBOOTING NOW!");
+    ESP.restart();
 }
 
 void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
@@ -1087,11 +1128,11 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
     COTA_DEBUG_PRINTLN("CustomOTA: Manual rollback requested via web interface");
     
     if (restoreFromBackup()) {
-        request->send(200, "text/plain", "Rollback successful. Device will reboot to previous firmware in 3 seconds...");
+        request->send(200, "text/plain", "Rollback successful. Device will reboot to previous firmware in " + String(_restartDelay / 1000) + " seconds...");
         COTA_DEBUG_PRINTLN("CustomOTA: Rollback successful, scheduling restart");
         // IMPORTANT: Non-blocking deferred restart - NO delay() calls!
         _restartPending = true;
-        _restartTime = millis() + 3000; // 3 seconds to allow user to see message
+        _restartTime = millis() + _restartDelay;
     } else {
         String errorMsg = "Rollback failed. ";
         if (!_hasValidBackup) {
@@ -1196,7 +1237,67 @@ bool CustomOTA::restoreFromBackup() {
         return false;
     }
     
-    COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s\n", cotaRunningPartition->label);
+    // Verify the backup partition contains valid firmware before setting boot
+    uint32_t first_word;
+    esp_err_t err = esp_partition_read(cotaBackupPartition, 0, &first_word, sizeof(first_word));
+    if (err != ESP_OK || first_word == 0xFFFFFFFF) {
+        COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Backup partition does not contain valid firmware");
+        return false;
+    }
+    
+    // Enhanced validation: Check multiple sectors for firmware integrity
+    COTA_DEBUG_PRINTLN("CustomOTA: Performing sector-by-sector validation of backup firmware...");
+    bool validationPassed = true;
+    const size_t sectorSize = 4096; // ESP32 flash sector size
+    const size_t sectorsToCheck = 8; // Check first 32KB (8 sectors) for validity
+    
+    for (size_t sector = 0; sector < sectorsToCheck && validationPassed; sector++) {
+        uint32_t sectorData[1024]; // 4096 bytes / 4 bytes per uint32_t
+        size_t offset = sector * sectorSize;
+        
+        // Don't read beyond partition size
+        if (offset >= cotaBackupPartition->size) {
+            break;
+        }
+        
+        esp_err_t sectorErr = esp_partition_read(cotaBackupPartition, offset, sectorData, sizeof(sectorData));
+        if (sectorErr != ESP_OK) {
+            COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to read sector %d: %s\n", sector, esp_err_to_name(sectorErr));
+            validationPassed = false;
+            break;
+        }
+        
+        // Check if sector is all 0xFF (empty)
+        bool sectorEmpty = true;
+        for (size_t i = 0; i < 1024 && sectorEmpty; i++) {
+            if (sectorData[i] != 0xFFFFFFFF) {
+                sectorEmpty = false;
+            }
+        }
+        
+        if (sectorEmpty) {
+            COTA_DEBUG_PRINTF("CustomOTA: WARNING - Sector %d is empty (all 0xFF)\n", sector);
+            // Empty sectors are OK as long as we have some valid data
+        } else {
+            // For non-empty sectors, do basic sanity checks
+            // Check for ESP32 image magic bytes in first sector
+            if (sector == 0) {
+                uint8_t* byteData = (uint8_t*)sectorData;
+                // ESP32 image starts with 0xE9 magic byte
+                if (byteData[0] != 0xE9) {
+                    COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Invalid ESP32 image magic byte in backup");
+                    validationPassed = false;
+                }
+            }
+        }
+    }
+    
+    if (!validationPassed) {
+        COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Backup firmware validation failed");
+        return false;
+    }
+    
+    COTA_DEBUG_PRINTLN("CustomOTA: Backup firmware validation passed");
     COTA_DEBUG_PRINTF("CustomOTA: Rollback partition: %s\n", cotaBackupPartition->label);
     
     // Set the backup partition as the boot partition
@@ -1359,12 +1460,6 @@ void CustomOTA::checkRestart() {
         #if CUSTOM_OTA_DEBUG
         Serial.flush(); // Only flush if debugging is enabled
         #endif
-        
-        // Add a small diagnostic delay to ensure serial output completes
-        unsigned long startTime = millis();
-        while (millis() - startTime < 500) {
-            // Small wait to ensure serial completes
-        }
         
         COTA_DEBUG_PRINTLN("CustomOTA: REBOOTING NOW!");
         ESP.restart(); // Final restart - unavoidably blocking but necessary

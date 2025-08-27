@@ -71,13 +71,22 @@ void setup() {
 void loop() {
   // Your main application code goes here
   
-  // Optional: Print update status if in progress
-  if (ota.isUpdateInProgress()) {
-    Serial.print("Update progress: ");
-    Serial.print(ota.getUpdateProgress());
-    Serial.println("%");
-    delay(1000);
+  // Optional: Print update status if in progress (real-time compatible)
+  static unsigned long lastStatusCheck = 0;
+  if (millis() - lastStatusCheck > 2000) { // Check every 2 seconds
+    lastStatusCheck = millis();
+    
+    if (ota.isUpdateInProgress()) {
+      Serial.print("Update progress: ");
+      Serial.print(ota.getUpdateProgress());
+      Serial.println("%");
+    }
   }
   
-  delay(100);
+  // Handle OTA operations (must be called every loop)
+  ota.handle();
+  
+  // Small delay to prevent overwhelming serial output
+  // Note: In production code, you may want to remove this entirely
+  delay(10);
 }

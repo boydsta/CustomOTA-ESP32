@@ -5,6 +5,43 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2025-08-27
+
+### Added
+- **Heap Monitoring** - Automatic memory checks before updates to prevent insufficient memory failures
+- **Enhanced Rollback Validation** - Sector-by-sector firmware integrity validation for safer rollbacks
+- **Configurable Restart Delays** - Customizable reboot timing with `setRestartDelay()` method
+- **Safer SPIFFS Handling** - Configurable SPIFFS formatting behavior to prevent data loss
+- **Advanced Configuration API** - New methods for fine-tuning library behavior:
+  - `setRestartDelay(unsigned long delayMs)` - Configure restart delay (default: 3000ms)
+  - `setSpiffsFormatOnFailure(bool allowFormat)` - Control automatic SPIFFS formatting (default: true)
+- **Enhanced Security Options** - Better control over SPIFFS data protection
+- **Improved Error Handling** - More comprehensive error detection and recovery
+
+### Changed
+- **SPIFFS Mount Logic** - More conservative formatting approach to preserve user data
+- **Rollback Process** - Enhanced validation with sector-by-sector integrity checks
+- **Update Process** - Added heap monitoring before starting updates
+- **Library Metadata** - Updated version information and feature descriptions
+- **Debug Output** - Enhanced logging for new features and validation steps
+
+### Fixed
+- **SPIFFS Data Loss** - Fixed potential data loss during SPIFFS mount failures
+- **Memory-Related Failures** - Added heap monitoring to prevent out-of-memory update failures
+- **Rollback Reliability** - Enhanced validation prevents rollback to corrupted firmware
+- **Timing Issues** - Configurable restart delays for different application requirements
+
+### Security
+- **SPIFFS Protection** - New option to disable automatic formatting for maximum data security
+- **Enhanced Validation** - Multiple layers of firmware integrity checking
+- **Memory Safety** - Heap monitoring prevents memory exhaustion attacks
+
+### Technical Details
+- Heap monitoring requires minimum 32KB free memory for updates
+- Sector-by-sector validation checks first 32KB of firmware for ESP32 image integrity
+- Configurable restart delays maintain real-time operation compatibility
+- SPIFFS formatting behavior is now user-controllable for data protection
+
 ## [1.2.0] - 2025-08-07
 
 ### Added

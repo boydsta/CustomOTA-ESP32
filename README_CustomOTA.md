@@ -1,0 +1,151 @@
+# Custom OTA Implementation for ESP32
+
+This custom OTA implementation replaces PrettyOTA with enhanced functionality including:
+
+## Features
+
+✅ **Reboot Functionality** - Manual device reboot capability
+✅ **Rollback Support** - Ability to rollback to previous firmware
+✅ **Progress Tracking** - Real-time upload progress
+✅ **Drag & Drop Interface** - Modern file upload interface
+✅ **Authentication** - Password protection for OTA operations
+✅ **Status Monitoring** - Real-time system status information
+✅ **Custom Branding** - Branded interface
+
+## Usage
+
+### Basic Setup
+
+```cpp
+#include "CustomOTA.h"
+
+AsyncWebServer server(80);
+CustomOTA otaUpdater;
+
+void setup() {
+    // Initialize OTA with credentials
+    otaUpdater.begin(&server, "admin", "password");
+    
+    // Set hardware information
+    otaUpdater.setHardwareID("MyDevice 1.0");
+    otaUpdater.setFirmwareVersion("3.0.7");
+    
+    server.begin();
+}
+```
+
+### Accessing the OTA Interface
+
+1. Connect to the device WiFi AP
+2. Navigate to: `http://192.168.4.1/update`
+3. Login with credentials (default: admin/password)
+
+### Interface Features
+
+#### Upload Section
+- **Drag & Drop**: Drag .bin files directly onto the upload area
+- **File Selection**: Click to browse and select firmware files
+- **Progress Bar**: Real-time upload progress display
+
+#### Control Buttons
+- **🚀 Upload Firmware**: Starts the firmware update process
+- **🔄 Reboot Device**: Manually reboot the device
+- **⏪ Rollback Firmware**: Restore previous firmware version (if available)
+
+#### System Information
+- Hardware ID display
+- Current firmware version
+- Free heap memory
+- Flash memory size
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/update` | GET | OTA interface page |
+| `/update/start` | POST | Upload firmware file |
+| `/update/reboot` | POST | Reboot device |
+| `/update/rollback` | POST | Rollback to previous firmware |
+| `/update/status` | GET | Get current update status (JSON) |
+
+### Security Features
+
+- HTTP Basic Authentication
+- File type validation (.bin files only)
+- Update process validation
+- Rollback safety checks
+
+### Configuration Options
+
+```cpp
+// Change credentials
+otaUpdater.setCredentials("myuser", "mypassword");
+
+// Update system information
+otaUpdater.setHardwareID("Custom Hardware");
+otaUpdater.setFirmwareVersion("1.2.3");
+```
+
+### Error Handling
+
+The system includes comprehensive error handling:
+- Invalid file type detection
+- Upload failure recovery
+- Network disconnection handling
+- Update verification
+
+### Rollback System
+
+The rollback feature provides a safety net:
+1. Creates backup before each update
+2. Validates backup integrity
+3. Restores previous firmware on demand
+4. Automatic cleanup of old backups
+
+### Customization
+
+The interface can be customized by modifying the HTML in `CustomOTA.cpp`:
+- Change colors and styling
+- Modify logos and branding
+- Add additional system information
+- Customize button layouts
+
+## Migration from PrettyOTA
+
+If migrating from PrettyOTA, replace:
+
+```cpp
+// Old PrettyOTA code
+#include <PrettyOTA.h>
+PrettyOTA OTAUpdates;
+OTAUpdates.Begin(&server);
+OTAUpdates.SetHardwareID("Hardware");
+OTAUpdates.SetAppVersion("1.0.0");
+```
+
+With:
+
+```cpp
+// New CustomOTA code
+#include "CustomOTA.h"
+CustomOTA otaUpdater;
+otaUpdater.begin(&server, "admin", "password");
+otaUpdater.setHardwareID("Hardware");
+otaUpdater.setFirmwareVersion("1.0.0");
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Upload fails**: Check file is valid .bin firmware
+2. **Authentication fails**: Verify username/password
+3. **Rollback unavailable**: No previous backup exists
+4. **Interface not loading**: Check WiFi connection and IP address
+
+### Debug Information
+
+Enable serial debugging to see detailed OTA process information:
+- Upload progress
+- Error messages
+- System status updates
