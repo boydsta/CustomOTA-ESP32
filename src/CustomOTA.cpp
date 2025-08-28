@@ -18,7 +18,7 @@
  * Maintains real-time compatibility throughout all operations
  */
 
-#include "CustomOTA.h"yes
+#include "CustomOTA.h"
 #include <esp_partition.h>
 
 // Helper to check for otadata partition
@@ -743,9 +743,12 @@ String CustomOTA::generateOTAPage() {
                 return;
             }
             
+            // Check if this is a firmware update (will cause reboot)
+            const isFirmwareUpdate = cotaUpdateType === 'firmware';
+            
             // Show appropriate confirmation dialog based on update type
             let confirmMessage = '';
-            if (cotaUpdateType === 'firmware') {
+            if (isFirmwareUpdate) {
                 confirmMessage = `
 
 WARNING: This will REBOOT the device!
@@ -789,23 +792,42 @@ Continue with filesystem update?`;
             cotaXhr.onreadystatechange = function() {
                 if (cotaXhr.readyState === 4) {
                     document.getElementById('progressContainer').style.display = 'none';
-                    if (cotaXhr.status === 200) {
-                        const cotaUpdateTypeName = cotaUpdateType.charAt(0).toUpperCase() + cotaUpdateType.slice(1);
+                    
+                    // Check for success status codes (200, 201, 202)
+                    if (cotaXhr.status >= 200 && cotaXhr.status < 300) {
+                        const responseText = cotaXhr.responseText.toLowerCase();
                         
-                        // Show appropriate success message based on update type
-                        if (cotaUpdateType === 'firmware') {
-                            showStatus(cotaUpdateTypeName + ' uploaded successfully! Device is rebooting...', 'success');
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 5000); // Longer timeout for reboot
+                        // Check if response indicates success
+                        if (responseText.includes('completed') || responseText.includes('success') || responseText.includes('rebooting')) {
+                            // ✅ Success handling
+                            const cotaUpdateTypeName = cotaUpdateType.charAt(0).toUpperCase() + cotaUpdateType.slice(1);
+                            
+                            if (isFirmwareUpdate) {
+                                showStatus(cotaUpdateTypeName + ' uploaded successfully! Device is rebooting...', 'success');
+                                setTimeout(() => {
+                                    window.location.reload();
+                                }, 8000); // Longer timeout for reboot
+                            } else {
+                                showStatus(cotaUpdateTypeName + ' uploaded successfully! Web interface updated - refresh browser to see changes.', 'success');
+                                setTimeout(() => {
+                                    window.location.reload();
+                                }, 3000); // Shorter timeout for filesystem
+                            }
                         } else {
-                            showStatus(cotaUpdateTypeName + ' uploaded successfully! Web interface updated - refresh browser to see changes.', 'success');
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 2000); // Shorter timeout for filesystem
+                            // Response doesn't indicate success
+                            showStatus('Unexpected response: ' + cotaXhr.responseText, 'error');
                         }
                     } else {
-                        showStatus('Upload failed: ' + cotaXhr.responseText, 'error');
+                        // HTTP error status
+                        let errorMsg = 'Upload failed';
+                        if (cotaXhr.status === 400) {
+                            errorMsg += ' (Bad Request)';
+                        } else if (cotaXhr.status === 500) {
+                            errorMsg += ' (Server Error)';
+                        } else {
+                            errorMsg += ' (HTTP ' + cotaXhr.status + ')';
+                        }
+                        showStatus(errorMsg + ': ' + cotaXhr.responseText, 'error');
                     }
                 }
             };
@@ -820,31 +842,76 @@ Continue with filesystem update?`;
         
         function rebootDevice() {
             if (confirm('Are you sure you want to reboot the device?')) {
+                // Show immediate feedback
+                showStatus('Sending reboot command...', 'info');
+                
                 fetch('/update/reboot', { method: 'POST' })
-                    .then(() => {
-                        showStatus('Device is rebooting...', 'info');
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 5000);
+                    .then(response => {
+                        if (response.ok) {
+                            // Success - device is rebooting
+                            showStatus('Reboot command sent successfully. Device is restarting...', 'success');
+                            // Give device time to reboot before trying to reload page
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 8000); // Increased timeout for reboot
+                        } else {
+                            // HTTP error
+                            showStatus('Reboot failed: HTTP ' + response.status, 'error');
+                        }
                     })
                     .catch(err => {
-                        showStatus('Reboot failed: ' + err.message, 'error');
+                        // Network errors during reboot are expected and OK
+                        const errorMsg = err.message.toLowerCase();
+                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection')) {
+                            // This is expected - device rebooted and cut off the connection
+                            showStatus('Reboot command sent. Device is restarting...', 'success');
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 8000);
+                        } else {
+                            // Unexpected error
+                            showStatus('Reboot failed: ' + err.message, 'error');
+                        }
                     });
             }
         }
         
         function rollbackFirmware() {
             if (confirm('Are you sure you want to rollback to the previous firmware?')) {
+                showStatus('Initiating rollback...', 'info');
+                
                 fetch('/update/rollback', { method: 'POST' })
-                    .then(response => response.text())
+                    .then(response => {
+                        if (response.ok) {
+                            return response.text();
+                        } else {
+                            throw new Error('HTTP ' + response.status);
+                        }
+                    })
                     .then(result => {
-                        showStatus(result, 'info');
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 3000);
+                        const resultLower = result.toLowerCase();
+                        if (resultLower.includes('successful') || resultLower.includes('rollback')) {
+                            showStatus(result, 'success');
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 6000); // Give time for deferred restart
+                        } else {
+                            showStatus('Rollback response: ' + result, 'info');
+                        }
                     })
                     .catch(err => {
-                        showStatus('Rollback failed: ' + err.message, 'error');
+                        // Network errors during rollback are expected (device will reboot)
+                        const errorMsg = err.message.toLowerCase();
+                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection')) {
+                            // This is expected - device is rebooting
+                            showStatus('Rollback initiated. Device is restarting...', 'success');
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 6000);
+                        } else {
+                            // Unexpected error
+                            showStatus('Rollback failed: ' + err.message, 'error');
+                        }
                     });
             }
         }
