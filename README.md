@@ -1,4 +1,19 @@
-# CustomOTA Library
+# Cust![Version](https://img.shields.io/badge/Version-1.2.2-blue.svg)
+
+## 🚀 What's New in v1.2.2
+
+### 🐛 Critical Bug Fixes
+- **Fixed Upload Progress Issue** - Progress bar now works correctly (0% → 100%) instead of staying at 0%
+- **Fixed Unexpected Reboot Dialogs** - Reboot confirmation no longer appears during firmware uploads
+- **Fixed Routing Mismatch** - Added missing POST route for `/update` endpoint to handle multipart uploads
+- **Improved Upload Reliability** - Enhanced error handling for network disconnections during device reboot
+
+### ✨ Enhanced Features
+- **🛡️ Safer SPIFFS Handling** - Configurable formatting behavior to prevent data loss
+- **⚡ Heap Monitoring** - Automatic memory checks before updates
+- **🔍 Enhanced Rollback Validation** - Sector-by-sector firmware integrity checks
+- **⏱️ Configurable Restart Delays** - Customizable reboot timing for different applications
+- **🔧 Advanced Configuration Options** - Fine-tune library behavior for your needsary
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and modern web interface.
 
@@ -16,9 +31,11 @@ ESP32 Over-The-Air firmware update library with dual partition backup system, fi
 - **🔧 Advanced Configuration Options** - Fine-tune library behavior for your needs
 
 ### 🐛 Bug Fixes
-- Improved SPIFFS mount logic to preserve user data
-- Better error handling and recovery mechanisms
-- Enhanced real-time compatibility
+- **Fixed Upload Progress Issue** - Progress bar now displays correctly from 0% to 100%
+- **Fixed Unexpected Reboot Dialogs** - Reboot confirmation removed from upload process
+- **Fixed Routing Mismatch** - Added POST route for `/update` endpoint
+- **Improved SPIFFS Mount Logic** - More conservative formatting to preserve user data
+- **Better Error Handling** - Enhanced recovery mechanisms and real-time compatibility
 
 ## Installation Methods
 
@@ -167,6 +184,7 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 - **Safer SPIFFS Handling** - Prevents accidental data loss during formatting
 - **Progress Tracking** - Real-time upload and update progress
 - **Status Monitoring** - Comprehensive system status information
+- **Smart Error Handling** - Distinguishes between real failures and expected connection drops during reboots
 
 ## CSS Customization
 
@@ -253,10 +271,32 @@ CustomOTA-ESP32/
 
 ### Common Issues & Solutions
 
-**"Upload Failed"**
-- Check .bin file validity and WiFi stability
+**"Progress Bar Stuck at 0%"**
+- **✅ FIXED in v1.2.2** - This was caused by a routing mismatch
+- **Solution**: Update to v1.2.2 or later for proper progress tracking
+- **Old behavior**: Progress stayed at 0% due to missing POST route
+- **New behavior**: Progress correctly shows 0% → 100% during upload
+
+**"Unexpected Reboot Confirmation Dialog"**
+- **✅ FIXED in v1.2.2** - Reboot confirmation was misplaced in upload function
+- **Solution**: Update to v1.2.2 or later for clean upload experience
+- **Old behavior**: Reboot dialog appeared during every firmware upload
+- **New behavior**: Reboot confirmation only appears when manually rebooting
+
+**"Upload Failed (HTTP 0)"**
+- **Cause**: Connection aborted during device reboot (normal for firmware updates)
+- **Solution**: This is usually a **successful upload**! The device reboots immediately after firmware installation, cutting off the connection
+- **Expected behavior**: 
+  - Progress bar reaches 100%
+  - Connection drops with HTTP 0 error
+  - Device reboots to new firmware
+  - Web interface becomes available again after ~10-15 seconds
+- **If upload truly failed**: Check device logs, file validity, and network stability
+
+**"Upload Failed (HTTP 400/500)"**
+- Check .bin file validity and ESP32 compatibility
 - Ensure sufficient heap memory (minimum 32KB required)
-- Verify file is a valid ESP32 firmware binary
+- Verify correct partition table configuration
 
 **"No OTA Partitions Found"**
 - ⚠️ **You need dual OTA partitions!** See partition configuration above

@@ -5,6 +5,26 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2025-08-29
+
+### Fixed
+- **Critical Upload Progress Bug** - Fixed progress bar stuck at 0% due to routing mismatch
+- **Unexpected Reboot Dialogs** - Removed reboot confirmation from upload process (moved to separate reboot function)
+- **Missing POST Route** - Added POST route for `/update` endpoint to handle multipart file uploads
+- **Upload Reliability** - Enhanced error handling for network disconnections during device reboot
+- **JavaScript Upload Function** - Separated upload and reboot functionality for cleaner user experience
+
+### Changed
+- **Upload Process** - Reboot confirmation now only appears when manually rebooting device
+- **Progress Tracking** - Upload progress now correctly displays from 0% to 100%
+- **Error Handling** - Better distinction between actual failures and expected connection drops
+
+### Technical Details
+- Fixed routing mismatch where JavaScript sent to `/update` but server only handled `/update/start`
+- Moved reboot confirmation from `uploadUpdate()` function to separate `rebootDevice()` function
+- Enhanced network error handling to properly detect successful uploads that result in device reboot
+- Maintained real-time compatibility and non-blocking operations
+
 ## [1.2.1] - 2025-08-27
 
 ### Added

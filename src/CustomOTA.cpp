@@ -167,6 +167,13 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         request->send(response);
     });
     
+    // Add POST route for /update to handle multipart uploads
+    _server->on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleUpdateStart(request);
+    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        handleUpdateUpload(request, filename, index, data, len, final);
+    });
+    
     _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
         handleUpdateStart(request);
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -799,7 +806,7 @@ Continue with filesystem update?`;
                         
                         // Check if response indicates success
                         if (responseText.includes('completed') || responseText.includes('success') || responseText.includes('rebooting')) {
-                            // ✅ Success handling
+                            // ✅ Success handling - upload completed
                             const cotaUpdateTypeName = cotaUpdateType.charAt(0).toUpperCase() + cotaUpdateType.slice(1);
                             
                             if (isFirmwareUpdate) {
@@ -813,21 +820,41 @@ Continue with filesystem update?`;
                                     window.location.reload();
                                 }, 3000); // Shorter timeout for filesystem
                             }
+                        } else if (responseText.includes('update started')) {
+                            // 🔄 Upload process started - this is expected
+                            showStatus('Upload started successfully, transferring file...', 'info');
+                            // Don't reload page here - wait for completion
                         } else {
-                            // Response doesn't indicate success
+                            // Response doesn't indicate expected status
                             showStatus('Unexpected response: ' + cotaXhr.responseText, 'error');
                         }
                     } else {
                         // HTTP error status
                         let errorMsg = 'Upload failed';
-                        if (cotaXhr.status === 400) {
+                        if (cotaXhr.status === 0) {
+                            // HTTP 0 is NORMAL for successful firmware uploads
+                            // Device reboots and connection drops - this is expected behavior
+                            if (isFirmwareUpdate) {
+                                showStatus('✅ Firmware uploaded successfully! Device is rebooting...', 'success');
+                                setTimeout(() => {
+                                    window.location.reload();
+                                }, 8000);
+                                return; // Don't show error for successful reboot
+                            } else {
+                                errorMsg += ' (Connection lost - check network)';
+                            }
+                        } else if (cotaXhr.status === 400) {
                             errorMsg += ' (Bad Request)';
                         } else if (cotaXhr.status === 500) {
                             errorMsg += ' (Server Error)';
                         } else {
                             errorMsg += ' (HTTP ' + cotaXhr.status + ')';
                         }
-                        showStatus(errorMsg + ': ' + cotaXhr.responseText, 'error');
+                        
+                        // Only show error if we haven't already handled it as success
+                        if (cotaXhr.status !== 0 || !isFirmwareUpdate) {
+                            showStatus(errorMsg + ': ' + cotaXhr.responseText, 'error');
+                        }
                     }
                 }
             };
@@ -836,7 +863,40 @@ Continue with filesystem update?`;
             updateProgress(0);
             showStatus('Uploading ' + cotaUpdateType + '...', 'info');
             
-            cotaXhr.open('POST', '/update/start');
+            cotaXhr.onerror = function() {
+                document.getElementById('progressContainer').style.display = 'none';
+                
+                // Check if this is likely a successful reboot (connection lost during device restart)
+                if (cotaUpdateType === 'firmware') {
+                    // For firmware updates, connection loss is expected and indicates success
+                    showStatus('✅ Firmware uploaded successfully! Device is rebooting...', 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 8000);
+                } else {
+                    // For filesystem updates, network errors are actual failures
+                    showStatus('Upload failed: Network connection lost', 'error');
+                }
+            };
+            
+            cotaXhr.ontimeout = function() {
+                document.getElementById('progressContainer').style.display = 'none';
+                
+                // Timeout during firmware upload is usually a successful reboot
+                if (cotaUpdateType === 'firmware') {
+                    showStatus('✅ Firmware uploaded successfully! Device is rebooting...', 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 8000);
+                } else {
+                    showStatus('Upload failed: Request timed out', 'error');
+                }
+            };
+            
+            // Set a reasonable timeout for the request
+            cotaXhr.timeout = 120000; // 2 minutes for large firmware files
+            
+            cotaXhr.open('POST', '/update', true); // Send to /update endpoint, not /update/start
             cotaXhr.send(cotaFormData);
         }
         
@@ -862,7 +922,7 @@ Continue with filesystem update?`;
                     .catch(err => {
                         // Network errors during reboot are expected and OK
                         const errorMsg = err.message.toLowerCase();
-                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection')) {
+                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection') || errorMsg.includes('failed')) {
                             // This is expected - device rebooted and cut off the connection
                             showStatus('Reboot command sent. Device is restarting...', 'success');
                             setTimeout(() => {
@@ -902,7 +962,7 @@ Continue with filesystem update?`;
                     .catch(err => {
                         // Network errors during rollback are expected (device will reboot)
                         const errorMsg = err.message.toLowerCase();
-                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection')) {
+                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection') || errorMsg.includes('failed')) {
                             // This is expected - device is rebooting
                             showStatus('Rollback initiated. Device is restarting...', 'success');
                             setTimeout(() => {

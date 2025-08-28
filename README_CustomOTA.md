@@ -2,6 +2,14 @@
 
 This custom OTA implementation replaces PrettyOTA with enhanced functionality including:
 
+## Recent Updates (v1.2.2)
+
+### ✅ Critical Bug Fixes
+- **Fixed Upload Progress** - Progress bar now works correctly (0% → 100%)
+- **Fixed Unexpected Reboot Dialogs** - Reboot confirmation removed from upload process
+- **Fixed Routing Issues** - Added missing POST route for proper file uploads
+- **Enhanced Error Handling** - Better handling of network disconnections during reboot
+
 ## Features
 
 ✅ **Reboot Functionality** - Manual device reboot capability
@@ -63,7 +71,8 @@ void setup() {
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/update` | GET | OTA interface page |
-| `/update/start` | POST | Upload firmware file |
+| `/update` | POST | **Upload firmware file** (multipart form data) |
+| `/update/start` | POST | Legacy upload endpoint (still supported) |
 | `/update/reboot` | POST | Reboot device |
 | `/update/rollback` | POST | Rollback to previous firmware |
 | `/update/status` | GET | Get current update status (JSON) |
@@ -138,10 +147,20 @@ otaUpdater.setFirmwareVersion("1.0.0");
 
 ### Common Issues
 
-1. **Upload fails**: Check file is valid .bin firmware
-2. **Authentication fails**: Verify username/password
-3. **Rollback unavailable**: No previous backup exists
-4. **Interface not loading**: Check WiFi connection and IP address
+1. **Progress Bar Stuck at 0%** *(Fixed in v1.2.2)*
+   - **Issue**: Upload progress remained at 0% throughout the entire upload
+   - **Cause**: Routing mismatch - JavaScript sent to `/update` but server only handled `/update/start`
+   - **Solution**: Update to v1.2.2 or later - progress now correctly shows 0% → 100%
+
+2. **Unexpected Reboot Confirmation Dialog** *(Fixed in v1.2.2)*
+   - **Issue**: Reboot confirmation appeared during every firmware upload
+   - **Cause**: Reboot confirmation code was misplaced in the upload function
+   - **Solution**: Update to v1.2.2 or later - reboot confirmation now only appears when manually rebooting
+
+3. **Upload fails**: Check file is valid .bin firmware
+4. **Authentication fails**: Verify username/password
+5. **Rollback unavailable**: No previous backup exists
+6. **Interface not loading**: Check WiFi connection and IP address
 
 ### Debug Information
 
