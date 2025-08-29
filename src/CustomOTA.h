@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.2.1
+ * Version: 1.2.3
  * 
  * Author: Boyd Benton
  * Created: 2025
@@ -17,8 +17,21 @@
  * - Progress tracking and status reporting
  * - Heap monitoring and enhanced rollback validation
  * - Configurable restart delays and SPIFFS handling
+ * - Robust NVS error handling
  * 
  * Version History:
+ * v1.2.3 (August 2025):
+ *   - Fixed NVS error handling to prevent "backup_ver NOT_FOUND" errors
+ *   - Added proper key existence checking before NVS operations
+ *   - Improved error handling for missing backup metadata
+ *   - Enhanced robustness for first-run scenarios
+ * 
+ * v1.2.2 (August 2025):
+ *   - Fixed critical upload progress bug (progress bar stuck at 0%)
+ *   - Fixed routing mismatch for multipart file uploads
+ *   - Removed unexpected reboot dialogs from upload process
+ *   - Enhanced network error handling for device reboots
+ * 
  * v1.2.1 (August 2025):
  *   - Added heap monitoring for update safety
  *   - Enhanced rollback validation with sector-by-sector checks
@@ -69,8 +82,8 @@
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
 #define CUSTOMOTA_VERSION_MINOR 2
-#define CUSTOMOTA_VERSION_PATCH 1
-#define CUSTOMOTA_VERSION_STRING "1.2.1"
+#define CUSTOMOTA_VERSION_PATCH 3
+#define CUSTOMOTA_VERSION_STRING "1.2.3"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 

@@ -5,6 +5,25 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2025-08-29
+
+### Fixed
+- **NVS Error Handling** - Fixed "backup_ver NOT_FOUND" errors by adding proper key existence checking
+- **Robust First-Run Behavior** - Improved handling of missing NVS keys on initial device startup
+- **Error Prevention** - Added `isKey()` checks before all NVS `getBytesLength()` operations
+- **Clean Debug Output** - Eliminated spurious NVS error messages from serial output
+
+### Changed
+- **NVS Operations** - Enhanced robustness of Preferences operations with existence validation
+- **Error Handling** - More graceful handling of missing backup metadata
+- **Library Stability** - Improved reliability for devices with cleared or corrupted NVS
+
+### Technical Details
+- Replaced direct `getBytesLength()` calls with `isKey()` existence checks
+- Added proper error handling for missing backup metadata
+- Maintained real-time compatibility and non-blocking operations
+- Enhanced library robustness for production deployments
+
 ## [1.2.2] - 2025-08-29
 
 ### Fixed
