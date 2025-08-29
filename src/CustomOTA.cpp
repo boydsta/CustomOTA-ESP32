@@ -154,7 +154,47 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     if (it) { count++; esp_partition_iterator_release(it); }
     isSingleOtaPartition = (count < 2);
     
-    COTA_DEBUG_PRINTLN("==========================================");
+    // CRITICAL FIX: Detect and correct serial upload boot partition issue
+    //
+    // PROBLEM: After serial upload, device may boot to wrong partition
+    // This happens because the OTA data partition retains the boot setting from
+    // the last OTA update, causing the bootloader to boot from the wrong partition.
+    //
+    // SOLUTION: Check if running partition != boot partition, and correct it.
+    // This handles the case where serial upload doesn't update OTA data.
+    // Works with any partition configuration (ota_0/ota_1, app0/app1, etc.)
+    //
+    if (!isSingleOtaPartition) {
+        const esp_partition_t* running = esp_ota_get_running_partition();
+        const esp_partition_t* boot_partition = esp_ota_get_boot_partition();
+
+        COTA_DEBUG_PRINTLN("CustomOTA: Checking boot partition state...");
+        COTA_DEBUG_PRINTF("CustomOTA: Running partition: %s\n", running ? running->label : "UNKNOWN");
+        COTA_DEBUG_PRINTF("CustomOTA: Boot partition: %s\n", boot_partition ? boot_partition->label : "UNKNOWN");
+
+        // Check for the serial upload boot partition issue: running partition != boot partition
+        // This happens when serial upload doesn't update the OTA data partition boot setting
+        if (running && boot_partition && running != boot_partition) {
+
+            COTA_DEBUG_PRINTLN("CustomOTA: DETECTED SERIAL UPLOAD BOOT ISSUE!");
+            COTA_DEBUG_PRINTF("CustomOTA: Running from %s but boot partition set to %s\n",
+                             running->label, boot_partition->label);
+            COTA_DEBUG_PRINTLN("CustomOTA: Correcting boot partition to match running partition...");
+
+            // Set boot partition to match the currently running partition
+            esp_err_t err = esp_ota_set_boot_partition(running);
+            if (err == ESP_OK) {
+                COTA_DEBUG_PRINTLN("CustomOTA: Boot partition corrected successfully");
+                COTA_DEBUG_PRINTLN("CustomOTA: Issue will be resolved on next reboot");
+            } else {
+                COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to correct boot partition: %s\n", esp_err_to_name(err));
+            }
+        } else if (running && boot_partition) {
+            COTA_DEBUG_PRINTLN("CustomOTA: Boot partition state appears correct");
+        } else {
+            COTA_DEBUG_PRINTLN("CustomOTA: WARNING - Could not determine partition state");
+        }
+    }    COTA_DEBUG_PRINTLN("==========================================");
     COTA_DEBUG_PRINTF("CustomOTA Library v%s\n", CUSTOMOTA_VERSION_STRING);
     COTA_DEBUG_PRINTF("Build: %s %s\n", CUSTOMOTA_BUILD_DATE, CUSTOMOTA_BUILD_TIME);
     COTA_DEBUG_PRINTF("Features: Firmware=%s, Filesystem=%s, AutoBackup=%s, RealTime=%s\n",

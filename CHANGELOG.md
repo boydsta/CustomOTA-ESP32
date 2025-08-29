@@ -5,6 +5,25 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2025-08-29
+
+### Fixed
+- **Serial Upload Boot Partition Inconsistency** - Fixed device booting to wrong partition after serial upload
+- **OTA Boot State Correction** - Added automatic detection and correction of stale boot partition settings
+- **Partition State Validation** - Enhanced startup validation to detect and fix partition mismatches
+- **Serial Upload Workflow** - Improved compatibility between OTA updates and serial uploads
+
+### Changed
+- **Boot Partition Management** - Enhanced boot partition handling for mixed OTA/serial workflows
+- **Startup Validation** - Added comprehensive partition state checking on library initialization
+- **Error Recovery** - Improved automatic recovery from inconsistent partition states
+
+### Technical Details
+- Added boot partition mismatch detection in `begin()` method
+- Implemented automatic correction of stale OTA boot partition settings
+- Enhanced partition validation to prevent booting to wrong partition after serial upload
+- Maintained real-time compatibility and non-blocking operations
+
 ## [1.2.3] - 2025-08-29
 
 ### Fixed

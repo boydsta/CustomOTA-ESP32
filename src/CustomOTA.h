@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.2.3
+ * Version: 1.2.4
  * 
  * Author: Boyd Benton
  * Created: 2025
@@ -18,8 +18,15 @@
  * - Heap monitoring and enhanced rollback validation
  * - Configurable restart delays and SPIFFS handling
  * - Robust NVS error handling
+ * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.2.4 (August 2025):
+ *   - Fixed serial upload boot partition inconsistency
+ *   - Added automatic boot partition correction after serial uploads
+ *   - Prevents device from booting to wrong partition after serial upload
+ *   - Enhanced partition state validation on startup
+ * 
  * v1.2.3 (August 2025):
  *   - Fixed NVS error handling to prevent "backup_ver NOT_FOUND" errors
  *   - Added proper key existence checking before NVS operations
@@ -82,8 +89,8 @@
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
 #define CUSTOMOTA_VERSION_MINOR 2
-#define CUSTOMOTA_VERSION_PATCH 3
-#define CUSTOMOTA_VERSION_STRING "1.2.3"
+#define CUSTOMOTA_VERSION_PATCH 4
+#define CUSTOMOTA_VERSION_STRING "1.2.4"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 
