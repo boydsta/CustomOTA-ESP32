@@ -127,6 +127,10 @@ private:
     unsigned long _restartDelay; // Configurable restart delay in milliseconds
     bool _allowSpiffsFormat; // Control SPIFFS formatting on mount failure
     
+    // SPIFFS mount status cache - avoid repeated mounting
+    bool _spiffsMounted;
+    bool _hasSpiffsPartition;
+    
     // Generate HTML page
     String generateOTAPage();
     String generateStatusPage();
@@ -147,6 +151,9 @@ private:
     
     // SPIFFS partition checking
     bool checkSpiffsPartition();
+    
+    // SPIFFS mount status helper
+    bool isSpiffsMounted();
 
 public:
     CustomOTA();

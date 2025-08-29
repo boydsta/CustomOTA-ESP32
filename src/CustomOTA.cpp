@@ -36,6 +36,54 @@ void detectOtaPartitionMode() {
     if (it) { count++; esp_partition_iterator_release(it); }
     isSingleOtaPartition = (count < 2);
 }
+
+// Helper functions for dynamic partition detection
+/**
+ * @brief Get the partition label for the other (backup) partition
+ * @param current_label The label of the currently running partition
+ * @return String containing the backup partition label, or empty string if not found
+ */
+String get_backup_partition_label(const char* current_label) {
+  // Get all APP partitions
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+
+  String backup_label = "";
+  while (it != nullptr) {
+    const esp_partition_t* part = esp_partition_get(it);
+    if (part && strcmp(part->label, current_label) != 0) {
+      // Found the other partition
+      backup_label = String(part->label);
+      break;
+    }
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
+
+  return backup_label;
+}
+
+/**
+ * @brief Find partition by label dynamically
+ * @param label The partition label to find
+ * @return Pointer to the partition, or nullptr if not found
+ */
+const esp_partition_t* find_partition_by_label(const char* label) {
+  // Get all APP partitions
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+
+  const esp_partition_t* found_part = nullptr;
+  while (it != nullptr) {
+    const esp_partition_t* part = esp_partition_get(it);
+    if (part && strcmp(part->label, label) == 0) {
+      found_part = part;
+      break;
+    }
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
+
+  return found_part;
+}
 // Helper function to format build date from __DATE__ to dd/mm/yyyy format
 String formatBuildDate() {
     String date = __DATE__;  // Format: "Jul 30 2025"
@@ -86,6 +134,10 @@ CustomOTA::CustomOTA() {
     _restartDelay = 3000; // Default 3 seconds
     _allowSpiffsFormat = true; // Default to allowing format for compatibility
     
+    // Initialize SPIFFS cache variables
+    _spiffsMounted = false;
+    _hasSpiffsPartition = checkSpiffsPartition();
+    
     // Set default build timestamp in dd/mm/yyyy format (will be overridden if setBuildTimestamp is called)
     _buildTimestamp = formatBuildDate();
 }
@@ -134,15 +186,19 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
             if (SPIFFS.format() && SPIFFS.begin(false)) {
                 COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS formatted and mounted successfully");
                 COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS was corrupted and has been formatted (user data may be lost)");
+                _spiffsMounted = true;
             } else {
                 COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS format failed - filesystem updates unavailable");
+                _spiffsMounted = false;
             }
         } else {
             COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS format disabled - filesystem updates unavailable");
             COTA_DEBUG_PRINTLN("CustomOTA: Use setSpiffsFormatOnFailure(true) to enable automatic formatting");
+            _spiffsMounted = false;
         }
     } else {
         COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS already mounted by main application");
+        _spiffsMounted = true;
     }
     
     // Initialize preferences
@@ -167,19 +223,6 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         request->send(response);
     });
     
-    // Add POST route for /update to handle multipart uploads
-    _server->on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
-        handleUpdateStart(request);
-    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        handleUpdateUpload(request, filename, index, data, len, final);
-    });
-    
-    _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-        handleUpdateStart(request);
-    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-        handleUpdateUpload(request, filename, index, data, len, final);
-    });
-    
     _server->on("/update/reboot", HTTP_POST, [this](AsyncWebServerRequest *request) {
         handleReboot(request);
     });
@@ -190,6 +233,21 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     
     _server->on("/update/status", HTTP_GET, [this](AsyncWebServerRequest *request) {
         handleStatus(request);
+    });
+    
+    // Add POST route for /update to handle multipart uploads
+    // NOTE: This must be registered AFTER more specific routes like /update/reboot
+    // because AsyncWebServer uses prefix matching
+    _server->on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleUpdateStart(request);
+    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        handleUpdateUpload(request, filename, index, data, len, final);
+    });
+    
+    _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleUpdateStart(request);
+    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        handleUpdateUpload(request, filename, index, data, len, final);
     });
 }
 
@@ -207,7 +265,8 @@ void CustomOTA::begin(AsyncWebServer* server) {
 void CustomOTA::setFirmwareVersion(const char* version) {
     _firmwareVersion = String(version);
     // Refresh backup status now that we have the firmware version
-    if (_prefs.getBytesLength("backup_ver") > 0) {
+    // Use isKey() to avoid NVS errors when key doesn't exist
+    if (_prefs.isKey("backup_ver")) {
         loadUpdateInfo();
     }
 }
@@ -317,7 +376,7 @@ String CustomOTA::generateOTAPage() {
                             case ESP_PARTITION_SUBTYPE_DATA_FAT: subtypeStr = "FAT"; break;
                             case ESP_PARTITION_SUBTYPE_DATA_SPIFFS: 
                                 subtypeStr = "SPIFFS"; 
-                                statusStr = SPIFFS.begin() ? "Mounted" : "Available";
+                                statusStr = _spiffsMounted ? "Mounted" : "Available";
                                 rowStyle = " style='background-color: #e1f5fe;'";
                                 break;
                             default: subtypeStr = "Unknown (" + String(part->subtype, HEX) + ")";
@@ -359,44 +418,52 @@ String CustomOTA::generateOTAPage() {
         // Check both partitions for firmware (simplified status for header)
         const esp_partition_t* app0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
         const esp_partition_t* app1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-        
+
         String app0_status = "Empty";
         String app1_status = "Empty";
-        
+
         // Check app0 partition
         if (app0) {
             uint32_t cotaFirstWord;
             esp_err_t cotaErr = esp_partition_read(app0, 0, &cotaFirstWord, sizeof(cotaFirstWord));
             if (cotaErr == ESP_OK && cotaFirstWord != 0xFFFFFFFF) {
                 app0_status = "Has Firmware";
-                if (strcmp(running_partition->label, "app0") == 0) {
+                if (strcmp(running_partition->label, app0->label) == 0) {
                     app0_status += " (Current)";
                 }
             }
         }
-        
-        // Check app1 partition  
+
+        // Check app1 partition
         if (app1) {
             uint32_t cotaFirstWord1;
             esp_err_t cotaErr1 = esp_partition_read(app1, 0, &cotaFirstWord1, sizeof(cotaFirstWord1));
             if (cotaErr1 == ESP_OK && cotaFirstWord1 != 0xFFFFFFFF) {
                 app1_status = "Has Firmware";
-                if (strcmp(running_partition->label, "app1") == 0) {
+                if (strcmp(running_partition->label, app1->label) == 0) {
                     app1_status += " (Current)";
                 }
             }
         }
-        
-        partitionStatus = "app0: " + app0_status + ", app1: " + app1_status;
-        
+
+        // Build dynamic partition status display
+        if (app0 && app1) {
+            String app0_label = String(app0->label);
+            String app1_label = String(app1->label);
+            partitionStatus = app0_label + ": " + app0_status + ", " + app1_label + ": " + app1_status;
+        } else {
+            // Fallback for single partition or other configurations
+            partitionStatus = "Current: " + partitionInfo;
+        }
+
         // Set backup status based on other partition having firmware
         const esp_partition_t* other_partition = nullptr;
-        if (strcmp(running_partition->label, "app0") == 0) {
+        if (app0 && strcmp(running_partition->label, app0->label) == 0) {
             other_partition = app1;
-        } else {
+        } else if (app1 && strcmp(running_partition->label, app1->label) == 0) {
             other_partition = app0;
         }
-        
+
         if (other_partition) {
             uint32_t first_word;
             esp_err_t err = esp_partition_read(other_partition, 0, &first_word, sizeof(first_word));
@@ -595,6 +662,21 @@ String CustomOTA::generateOTAPage() {
             color: #0c5460;
         }
         
+        .status-good {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .status-warning {
+            color: #ffc107;
+            font-weight: bold;
+        }
+        
+        .status-error {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
         .radio-group {
             margin: 20px 0;
         }
@@ -628,7 +710,7 @@ String CustomOTA::generateOTAPage() {
         <p><strong>Free Heap:</strong> <span id="freeHeap">)rawliteral" + String(ESP.getFreeHeap()) + R"rawliteral(</span> bytes</p>
         <p><strong>Flash Size:</strong> )rawliteral" + String(ESP.getFlashChipSize()) + R"rawliteral( bytes</p>
         <p><strong>SPIFFS Partition:</strong> )rawliteral" + String(hasSpiffsPartition ? "Available" : "Not Available") + R"rawliteral(</p>
-        <p><strong>SPIFFS Mount:</strong> )rawliteral" + String(SPIFFS.begin() ? "Mounted" : "Failed") + R"rawliteral(</p>
+        <p><strong>SPIFFS Mount:</strong> <span id="spiffsStatus">)rawliteral" + String(_spiffsMounted ? "Mounted" : "Failed") + R"rawliteral(</span></p>
     </div>
     
     <hr>
@@ -984,6 +1066,20 @@ Continue with filesystem update?`;
                     if (document.getElementById('freeHeap')) {
                         document.getElementById('freeHeap').textContent = data.freeHeap || 'Unknown';
                     }
+                    // Update SPIFFS status display
+                    if (document.getElementById('spiffsStatus')) {
+                        const spiffsStatus = document.getElementById('spiffsStatus');
+                        const spiffsMounted = data.spiffsMounted === true;
+                        const hasSpiffsPartition = data.hasSpiffsPartition === true;
+                        
+                        if (hasSpiffsPartition) {
+                            spiffsStatus.textContent = spiffsMounted ? 'Mounted' : 'Not Mounted';
+                            spiffsStatus.className = spiffsMounted ? 'status-good' : 'status-warning';
+                        } else {
+                            spiffsStatus.textContent = 'No Partition';
+                            spiffsStatus.className = 'status-error';
+                        }
+                    }
                 })
                 .catch(() => {
                     // Ignore errors for status updates
@@ -1205,9 +1301,11 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                 SPIFFS.end();
                 if (SPIFFS.begin(true)) {
                     COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS remounted successfully - new files available");
+                    _spiffsMounted = true;
                     request->send(200, "text/plain", "Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
                 } else {
                     COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS remount failed, may need manual reboot");
+                    _spiffsMounted = false;
                     request->send(200, "text/plain", "Filesystem update completed but remount failed. Please reboot device manually if web interface issues occur.");
                 }
                 
@@ -1230,17 +1328,21 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
 
 void CustomOTA::handleReboot(AsyncWebServerRequest *request) {
     // REAL-TIME CRITICAL: Immediate reboot for reliability
-    
+
     if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
         return request->requestAuthentication();
     }
-    
+
     // Simple reboot of current partition
-    COTA_DEBUG_PRINTLN("CustomOTA: Manual reboot requested");
+    COTA_DEBUG_PRINTLN("==========================================");
+    COTA_DEBUG_PRINTLN("CustomOTA: MANUAL REBOOT REQUEST RECEIVED");
+    COTA_DEBUG_PRINTLN("CustomOTA: Processing reboot command...");
+    COTA_DEBUG_PRINTLN("CustomOTA: Sending response to client");
     request->send(200, "text/plain", "Rebooting device...");
-    
+
     // Immediate reboot for reliability
     COTA_DEBUG_PRINTLN("CustomOTA: REBOOTING NOW!");
+    COTA_DEBUG_PRINTLN("==========================================");
     ESP.restart();
 }
 
@@ -1279,6 +1381,8 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
     json += "\"status\":\"" + _updateStatus + "\",";
     json += "\"hasBackup\":" + String(_hasValidBackup ? "true" : "false") + ",";
     json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"spiffsMounted\":" + String(_spiffsMounted ? "true" : "false") + ",";
+    json += "\"hasSpiffsPartition\":" + String(_hasSpiffsPartition ? "true" : "false") + ",";
     json += "\"version\":\"" + _firmwareVersion + "\",";
     json += "\"buildTimestamp\":\"" + _buildTimestamp + "\"";
     json += "}";
@@ -1350,19 +1454,22 @@ bool CustomOTA::restoreFromBackup() {
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot get current running partition");
         return false;
     }
-    
-    // Find the backup partition (the other partition)
-    const esp_partition_t* cotaBackupPartition = nullptr;
-    if (strcmp(cotaRunningPartition->label, "app0") == 0) {
-        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-    } else {
-        cotaBackupPartition = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+
+    // Find the backup partition dynamically (the other APP partition)
+    String backup_label = get_backup_partition_label(cotaRunningPartition->label);
+    if (backup_label.length() == 0) {
+        COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot find backup partition label");
+        return false;
     }
-    
+
+    const esp_partition_t* cotaBackupPartition = find_partition_by_label(backup_label.c_str());
     if (!cotaBackupPartition) {
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot find backup partition");
         return false;
     }
+
+    COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n",
+                      cotaRunningPartition->label, cotaBackupPartition->label);
     
     // Verify the backup partition contains valid firmware before setting boot
     uint32_t first_word;
@@ -1468,54 +1575,55 @@ void CustomOTA::saveUpdateInfo() {
 
 void CustomOTA::loadUpdateInfo() {
     // Check if backup_ver key exists before trying to read it
-    size_t requiredSize = _prefs.getBytesLength("backup_ver");
-    if (requiredSize > 0) {
-        String backupVersion = _prefs.getString("backup_ver", "");
-        String backupPartition = _prefs.getString("backup_part", "");
-        String backupValid = _prefs.getString("backup_valid", "");
-        
-        COTA_DEBUG_PRINTF("CustomOTA: Loading backup info - Version: '%s', Partition: '%s', Valid: '%s'\n", 
-                         backupVersion.c_str(), backupPartition.c_str(), backupValid.c_str());
-        
-        if (backupVersion.length() > 0 && backupPartition.length() > 0 && backupValid == "YES") {
-            // Additional validation: ensure the backup partition exists and is different from current
-            const esp_partition_t* current = esp_ota_get_running_partition();
-            const esp_partition_t* backup_part = nullptr;
+    // Use isKey() to avoid NVS errors when key doesn't exist
+    if (_prefs.isKey("backup_ver")) {
+        size_t requiredSize = _prefs.getBytesLength("backup_ver");
+        if (requiredSize > 0) {
+            String backupVersion = _prefs.getString("backup_ver", "");
+            String backupPartition = _prefs.getString("backup_part", "");
+            String backupValid = _prefs.getString("backup_valid", "");
             
-            if (current && strcmp(current->label, backupPartition.c_str()) != 0) {
-                // Find the backup partition
-                if (strcmp(backupPartition.c_str(), "app0") == 0) {
-                    backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
-                } else if (strcmp(backupPartition.c_str(), "app1") == 0) {
-                    backup_part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-                }
+            COTA_DEBUG_PRINTF("CustomOTA: Loading backup info - Version: '%s', Partition: '%s', Valid: '%s'\n", 
+                             backupVersion.c_str(), backupPartition.c_str(), backupValid.c_str());
+            
+            if (backupVersion.length() > 0 && backupPartition.length() > 0 && backupValid == "YES") {
+                // Additional validation: ensure the backup partition exists and is different from current
+                const esp_partition_t* current = esp_ota_get_running_partition();
+                const esp_partition_t* backup_part = nullptr;
                 
-                if (backup_part) {
-                    _hasValidBackup = true;
-                    _backupSize = _prefs.getUInt("backup_size", 0);
-                    COTA_DEBUG_PRINTLN("CustomOTA: Valid backup found and verified");
-                    COTA_DEBUG_PRINTF("CustomOTA: Backup version: %s, Partition: %s, Size: %d bytes\n", 
-                                     backupVersion.c_str(), backupPartition.c_str(), _backupSize);
-                    COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n", 
-                                     current->label, backupPartition.c_str());
+                if (current && strcmp(current->label, backupPartition.c_str()) != 0) {
+                    // Find the backup partition dynamically
+                    const esp_partition_t* backup_part = find_partition_by_label(backupPartition.c_str());
+                    if (backup_part) {
+                        _hasValidBackup = true;
+                        _backupSize = _prefs.getUInt("backup_size", 0);
+                        COTA_DEBUG_PRINTLN("CustomOTA: Valid backup found and verified");
+                        COTA_DEBUG_PRINTF("CustomOTA: Backup version: %s, Partition: %s, Size: %d bytes\n",
+                                         backupVersion.c_str(), backupPartition.c_str(), _backupSize);
+                        COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n",
+                                         current->label, backupPartition.c_str());
+                    } else {
+                        _hasValidBackup = false;
+                        COTA_DEBUG_PRINTLN("CustomOTA: Backup partition not found - marking backup as invalid");
+                    }
                 } else {
                     _hasValidBackup = false;
-                    COTA_DEBUG_PRINTLN("CustomOTA: Backup partition not found - marking backup as invalid");
+                    COTA_DEBUG_PRINTLN("CustomOTA: Backup partition is same as current or current partition unknown - invalid backup");
+                    if (current) {
+                        COTA_DEBUG_PRINTF("CustomOTA: Current: %s, Backup: %s\n", current->label, backupPartition.c_str());
+                    }
                 }
             } else {
                 _hasValidBackup = false;
-                COTA_DEBUG_PRINTLN("CustomOTA: Backup partition is same as current or current partition unknown - invalid backup");
-                if (current) {
-                    COTA_DEBUG_PRINTF("CustomOTA: Current: %s, Backup: %s\n", current->label, backupPartition.c_str());
-                }
+                COTA_DEBUG_PRINTLN("CustomOTA: Incomplete backup metadata found");
             }
         } else {
             _hasValidBackup = false;
-            COTA_DEBUG_PRINTLN("CustomOTA: Incomplete backup metadata found");
+            COTA_DEBUG_PRINTLN("CustomOTA: No previous backup (first run or backup cleared)");
         }
     } else {
         _hasValidBackup = false;
-        COTA_DEBUG_PRINTLN("CustomOTA: No previous backup (first run or backup cleared)");
+        COTA_DEBUG_PRINTLN("CustomOTA: No backup metadata found in NVS");
     }
     
     // If no backup found in preferences, try auto-detection
@@ -1533,14 +1641,14 @@ bool CustomOTA::autoDetectBackup() {
         return false;
     }
     
-    // Find the other partition
-    const esp_partition_t* other = nullptr;
-    if (strcmp(running->label, "app0") == 0) {
-        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-    } else {
-        other = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
+    // Find the other partition dynamically
+    String backup_label = get_backup_partition_label(running->label);
+    if (backup_label.length() == 0) {
+        COTA_DEBUG_PRINTLN("CustomOTA: Auto-detect failed - cannot find other partition");
+        return false;
     }
-    
+
+    const esp_partition_t* other = find_partition_by_label(backup_label.c_str());
     if (!other) {
         COTA_DEBUG_PRINTLN("CustomOTA: Auto-detect failed - cannot find other partition");
         return false;
@@ -1610,4 +1718,12 @@ bool CustomOTA::checkSpiffsPartition() {
     // Check if SPIFFS partition exists in the partition table
     const esp_partition_t* spiffs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
     return (spiffs_partition != nullptr);
+}
+
+/**
+ * @brief Check SPIFFS mount status using cached value
+ * @return true if SPIFFS is mounted, false otherwise
+ */
+bool CustomOTA::isSpiffsMounted() {
+    return _spiffsMounted;
 }
