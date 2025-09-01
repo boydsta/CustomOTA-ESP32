@@ -154,16 +154,8 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     if (it) { count++; esp_partition_iterator_release(it); }
     isSingleOtaPartition = (count < 2);
     
-    // CRITICAL FIX: Detect and correct serial upload boot partition issue
-    //
-    // PROBLEM: After serial upload, device may boot to wrong partition
-    // This happens because the OTA data partition retains the boot setting from
-    // the last OTA update, causing the bootloader to boot from the wrong partition.
-    //
-    // SOLUTION: Check if running partition != boot partition, and correct it.
-    // This handles the case where serial upload doesn't update OTA data.
-    // Works with any partition configuration (ota_0/ota_1, app0/app1, etc.)
-    //
+    // CRITICAL FIX: Clear any stale OTA boot partition setting after serial upload
+    // This prevents the device from booting to the wrong partition after serial upload
     if (!isSingleOtaPartition) {
         const esp_partition_t* running = esp_ota_get_running_partition();
         const esp_partition_t* boot_partition = esp_ota_get_boot_partition();
@@ -172,29 +164,27 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         COTA_DEBUG_PRINTF("CustomOTA: Running partition: %s\n", running ? running->label : "UNKNOWN");
         COTA_DEBUG_PRINTF("CustomOTA: Boot partition: %s\n", boot_partition ? boot_partition->label : "UNKNOWN");
 
-        // Check for the serial upload boot partition issue: running partition != boot partition
-        // This happens when serial upload doesn't update the OTA data partition boot setting
-        if (running && boot_partition && running != boot_partition) {
-
-            COTA_DEBUG_PRINTLN("CustomOTA: DETECTED SERIAL UPLOAD BOOT ISSUE!");
-            COTA_DEBUG_PRINTF("CustomOTA: Running from %s but boot partition set to %s\n",
-                             running->label, boot_partition->label);
-            COTA_DEBUG_PRINTLN("CustomOTA: Correcting boot partition to match running partition...");
+        if (running && boot_partition && strcmp(running->label, boot_partition->label) != 0) {
+            COTA_DEBUG_PRINTLN("CustomOTA: WARNING - Boot partition mismatch detected after serial upload");
+            COTA_DEBUG_PRINTF("CustomOTA: Running: %s, Boot set to: %s\n", running->label, boot_partition->label);
+            COTA_DEBUG_PRINTLN("CustomOTA: Correcting boot partition to match running partition");
 
             // Set boot partition to match the currently running partition
             esp_err_t err = esp_ota_set_boot_partition(running);
             if (err == ESP_OK) {
                 COTA_DEBUG_PRINTLN("CustomOTA: Boot partition corrected successfully");
-                COTA_DEBUG_PRINTLN("CustomOTA: Issue will be resolved on next reboot");
+                COTA_DEBUG_PRINTF("CustomOTA: Boot partition now set to: %s\n", running->label);
             } else {
                 COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to correct boot partition: %s\n", esp_err_to_name(err));
             }
         } else if (running && boot_partition) {
-            COTA_DEBUG_PRINTLN("CustomOTA: Boot partition state appears correct");
+            COTA_DEBUG_PRINTLN("CustomOTA: Boot partition state is correct");
         } else {
             COTA_DEBUG_PRINTLN("CustomOTA: WARNING - Could not determine partition state");
         }
-    }    COTA_DEBUG_PRINTLN("==========================================");
+    }
+    
+    COTA_DEBUG_PRINTLN("==========================================");
     COTA_DEBUG_PRINTF("CustomOTA Library v%s\n", CUSTOMOTA_VERSION_STRING);
     COTA_DEBUG_PRINTF("Build: %s %s\n", CUSTOMOTA_BUILD_DATE, CUSTOMOTA_BUILD_TIME);
     COTA_DEBUG_PRINTF("Features: Firmware=%s, Filesystem=%s, AutoBackup=%s, RealTime=%s\n",
@@ -717,6 +707,33 @@ String CustomOTA::generateOTAPage() {
             font-weight: bold;
         }
         
+        .heap-critical {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .heap-display {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        
+        .heap-healthy {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .heap-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .heap-critical {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
         .radio-group {
             margin: 20px 0;
         }
@@ -747,7 +764,7 @@ String CustomOTA::generateOTAPage() {
         <p><strong>Build Date:</strong> )rawliteral" + _buildTimestamp + R"rawliteral(</p>
         <p><strong>Running Partition:</strong> )rawliteral" + partitionInfo + R"rawliteral(</p>
         <p><strong>Partition Status:</strong> )rawliteral" + partitionStatus + R"rawliteral(</p>
-        <p><strong>Free Heap:</strong> <span id="freeHeap">)rawliteral" + String(ESP.getFreeHeap()) + R"rawliteral(</span> bytes</p>
+        <p><strong>Free Heap:</strong> <span id="freeHeap">)rawliteral" + String(ESP.getFreeHeap()) + R"rawliteral(</span> bytes (<span id="heapPercent">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + R"rawliteral(</span>%) - <span id="heapStatus" class="heap-display )rawliteral" + String(((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 50 ? "heap-healthy" : ((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 25 ? "heap-warning" : "heap-critical") + R"rawliteral(">))rawliteral" + String(((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 50 ? "🟢 Healthy" : ((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 25 ? "🟡 Warning" : "🔴 Critical") + R"rawliteral(</span></p>
         <p><strong>Flash Size:</strong> )rawliteral" + String(ESP.getFlashChipSize()) + R"rawliteral( bytes</p>
         <p><strong>SPIFFS Partition:</strong> )rawliteral" + String(hasSpiffsPartition ? "Available" : "Not Available") + R"rawliteral(</p>
         <p><strong>SPIFFS Mount:</strong> <span id="spiffsStatus">)rawliteral" + String(_spiffsMounted ? "Mounted" : "Failed") + R"rawliteral(</span></p>
@@ -1106,6 +1123,29 @@ Continue with filesystem update?`;
                     if (document.getElementById('freeHeap')) {
                         document.getElementById('freeHeap').textContent = data.freeHeap || 'Unknown';
                     }
+                    
+                    // Update heap percentage and status
+                    if (document.getElementById('heapPercent') && document.getElementById('heapStatus')) {
+                        const freeHeap = parseInt(data.freeHeap) || 0;
+                        const totalHeap = data.totalHeap || 327680; // Default ESP32 heap size
+                        const percentage = Math.round((freeHeap * 100) / totalHeap);
+                        
+                        document.getElementById('heapPercent').textContent = percentage;
+                        
+                        const heapStatus = document.getElementById('heapStatus');
+                        
+                        if (percentage >= 50) {
+                            heapStatus.textContent = '🟢 Healthy';
+                            heapStatus.className = 'heap-display heap-healthy';
+                        } else if (percentage >= 25) {
+                            heapStatus.textContent = '🟡 Warning';
+                            heapStatus.className = 'heap-display heap-warning';
+                        } else {
+                            heapStatus.textContent = '🔴 Critical';
+                            heapStatus.className = 'heap-display heap-critical';
+                        }
+                    }
+                    
                     // Update SPIFFS status display
                     if (document.getElementById('spiffsStatus')) {
                         const spiffsStatus = document.getElementById('spiffsStatus');
@@ -1421,6 +1461,7 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
     json += "\"status\":\"" + _updateStatus + "\",";
     json += "\"hasBackup\":" + String(_hasValidBackup ? "true" : "false") + ",";
     json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"totalHeap\":" + String(ESP.getHeapSize()) + ",";
     json += "\"spiffsMounted\":" + String(_spiffsMounted ? "true" : "false") + ",";
     json += "\"hasSpiffsPartition\":" + String(_hasSpiffsPartition ? "true" : "false") + ",";
     json += "\"version\":\"" + _firmwareVersion + "\",";
@@ -1622,36 +1663,40 @@ void CustomOTA::loadUpdateInfo() {
             String backupVersion = _prefs.getString("backup_ver", "");
             String backupPartition = _prefs.getString("backup_part", "");
             String backupValid = _prefs.getString("backup_valid", "");
-            
-            COTA_DEBUG_PRINTF("CustomOTA: Loading backup info - Version: '%s', Partition: '%s', Valid: '%s'\n", 
+
+            COTA_DEBUG_PRINTF("CustomOTA: Loading backup info - Version: '%s', Partition: '%s', Valid: '%s'\n",
                              backupVersion.c_str(), backupPartition.c_str(), backupValid.c_str());
-            
+
             if (backupVersion.length() > 0 && backupPartition.length() > 0 && backupValid == "YES") {
-                // Additional validation: ensure the backup partition exists and is different from current
-                const esp_partition_t* current = esp_ota_get_running_partition();
-                const esp_partition_t* backup_part = nullptr;
-                
-                if (current && strcmp(current->label, backupPartition.c_str()) != 0) {
-                    // Find the backup partition dynamically
-                    const esp_partition_t* backup_part = find_partition_by_label(backupPartition.c_str());
-                    if (backup_part) {
+                // Additional validation: ensure the backup partition exists and contains firmware
+                const esp_partition_t* backup_part = find_partition_by_label(backupPartition.c_str());
+                if (backup_part) {
+                    // Check if backup partition actually contains firmware
+                    uint32_t first_word = 0xFFFFFFFF;
+                    esp_err_t err = esp_partition_read(backup_part, 0, &first_word, sizeof(first_word));
+
+                    if (err == ESP_OK && first_word != 0xFFFFFFFF) {
                         _hasValidBackup = true;
                         _backupSize = _prefs.getUInt("backup_size", 0);
                         COTA_DEBUG_PRINTLN("CustomOTA: Valid backup found and verified");
                         COTA_DEBUG_PRINTF("CustomOTA: Backup version: %s, Partition: %s, Size: %d bytes\n",
                                          backupVersion.c_str(), backupPartition.c_str(), _backupSize);
-                        COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n",
-                                         current->label, backupPartition.c_str());
+                        return; // Exit early - we found a valid backup
                     } else {
-                        _hasValidBackup = false;
-                        COTA_DEBUG_PRINTLN("CustomOTA: Backup partition not found - marking backup as invalid");
+                        COTA_DEBUG_PRINTLN("CustomOTA: Backup partition exists but contains no firmware - clearing invalid metadata");
+                        // Clear invalid backup metadata
+                        _prefs.remove("backup_ver");
+                        _prefs.remove("backup_part");
+                        _prefs.remove("backup_valid");
+                        _prefs.remove("backup_size");
                     }
                 } else {
-                    _hasValidBackup = false;
-                    COTA_DEBUG_PRINTLN("CustomOTA: Backup partition is same as current or current partition unknown - invalid backup");
-                    if (current) {
-                        COTA_DEBUG_PRINTF("CustomOTA: Current: %s, Backup: %s\n", current->label, backupPartition.c_str());
-                    }
+                    COTA_DEBUG_PRINTLN("CustomOTA: Backup partition not found - clearing invalid metadata");
+                    // Clear invalid backup metadata
+                    _prefs.remove("backup_ver");
+                    _prefs.remove("backup_part");
+                    _prefs.remove("backup_valid");
+                    _prefs.remove("backup_size");
                 }
             } else {
                 _hasValidBackup = false;
@@ -1665,8 +1710,8 @@ void CustomOTA::loadUpdateInfo() {
         _hasValidBackup = false;
         COTA_DEBUG_PRINTLN("CustomOTA: No backup metadata found in NVS");
     }
-    
-    // If no backup found in preferences, try auto-detection
+
+    // If no backup found in preferences, try auto-detection (only once)
     if (!_hasValidBackup) {
         COTA_DEBUG_PRINTLN("CustomOTA: No backup metadata found, attempting auto-detection...");
         autoDetectBackup();
