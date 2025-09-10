@@ -1,6 +1,6 @@
 # Custom OTA Implementation for ESP32 Projects
 
-This custom OTA implementation replaces PrettyOTA with enhanced functionality including:
+This custom OTA implementation provides enhanced OTA functionality for ESP32 projects, including:
 
 ## Recent Updates (v1.2.4)
 
@@ -125,29 +125,7 @@ The interface can be customized by modifying the HTML in `CustomOTA.cpp`:
 - Add additional system information
 - Customize button layouts
 
-## Migration from PrettyOTA (v1.2.4)
 
-If migrating from PrettyOTA, replace:
-
-```cpp
-// Old PrettyOTA code
-#include <PrettyOTA.h>
-PrettyOTA OTAUpdates;
-OTAUpdates.Begin(&server);
-OTAUpdates.SetHardwareID("Hardware");
-OTAUpdates.SetAppVersion("1.0.0");
-```
-
-With:
-
-```cpp
-// New CustomOTA code
-#include "CustomOTA.h"
-CustomOTA otaUpdater;
-otaUpdater.begin(&server, "admin", "password");
-otaUpdater.setHardwareID("Hardware");
-otaUpdater.setFirmwareVersion("1.0.0");
-```
 
 ## Troubleshooting (v1.2.4)
 
