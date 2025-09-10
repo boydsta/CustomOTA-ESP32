@@ -24,10 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced partition validation to prevent booting to wrong partition after serial upload
 - Maintained real-time compatibility and non-blocking operations
 
-## [1.2.3] - 2025-08-29
+## [1.2.4] - 2025-09-11
 
 ### Fixed
-- **NVS Error Handling** - Fixed "backup_ver NOT_FOUND" errors by adding proper key existence checking
+- Serial upload boot partition inconsistency
+- OTA boot state correction and partition validation
+- Partition state validation and error recovery
+
+### Changed
+- Boot partition management and startup validation
+- Improved compatibility for mixed OTA/serial workflows
+
+### Technical Details
+- Added boot partition mismatch detection in `begin()`
 - **Robust First-Run Behavior** - Improved handling of missing NVS keys on initial device startup
 - **Error Prevention** - Added `isKey()` checks before all NVS `getBytesLength()` operations
 - **Clean Debug Output** - Eliminated spurious NVS error messages from serial output

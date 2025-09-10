@@ -1,6 +1,15 @@
-# Cust![Version](https://img.shields.io/badge/Version-1.2.2-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.2.4-blue.svg)
 
-## 🚀 What's New in v1.2.2
+## 🚀 What's New in v1.2.4
+
+### 🐞 Bug Fixes
+- Serial upload boot partition inconsistency fixed
+- OTA boot state correction and partition validation
+- Partition state validation and error recovery
+
+### ✨ Enhanced Features
+- Boot partition management and startup validation
+- Improved compatibility for mixed OTA/serial workflows
 
 ### 🐛 Critical Bug Fixes
 - **Fixed Upload Progress Issue** - Progress bar now works correctly (0% → 100%) instead of staying at 0%
@@ -17,11 +26,18 @@
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and modern web interface.
 
+
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
-![Version](https://img.shields.io/badge/Version-1.2.1-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-## 🚀 What's New in v1.2.1
+## 🚀 What's New in v1.2.3
+
+### 🐞 Bug Fixes
+- NVS error handling and robust first-run behavior
+- Clean debug output and improved reliability
+
+### ✨ Enhanced Features
+- NVS operations and error handling
 
 ### ✨ Enhanced Features
 - **🛡️ Safer SPIFFS Handling** - Configurable formatting behavior to prevent data loss
@@ -65,7 +81,7 @@ your_project/
 
 ### ⚠️ CRITICAL: Partition Configuration Required
 
-**CustomOTA requires dual OTA partitions to function.** You must configure your ESP32 with the correct partition table.
+**CustomOTA requires dual OTA partitions to function.** You must configure your ESP32 with the correct partition table. See changelog for new partition validation features.
 
 #### Option 1: Use Provided Partition Files
 Copy the appropriate partition file from this library to your project:
@@ -138,7 +154,7 @@ ota.setRestartDelay(5000); // 5 seconds
 ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 ```
 
-## API Reference
+## API Reference (v1.2.4)
 
 ### Core Methods
 - `begin(AsyncWebServer* server)` - Initialize OTA system
@@ -166,7 +182,7 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 - `CustomOTA::getVersionPatch()` - Get patch version number
 - `CustomOTA::getBuildInfo()` - Get build date and time
 
-## Features
+## Features (v1.2.4)
 
 ### ✅ Core Features
 - **Dual Partition Backup** - Automatic firmware rollback capability
@@ -267,7 +283,7 @@ CustomOTA-ESP32/
 └── README.md
 ```
 
-## Troubleshooting
+## Troubleshooting (v1.2.4)
 
 ### Common Issues & Solutions
 
@@ -339,7 +355,7 @@ This provides extensive debug information including:
 - Rollback validation details
 - Network and authentication status
 
-## Migration Guide
+## Migration Guide (v1.2.4)
 
 ### From PrettyOTA
 Replace:

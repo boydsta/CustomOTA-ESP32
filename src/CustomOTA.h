@@ -212,6 +212,13 @@ public:
     int getUpdateProgress() { return _updateProgress; }
     bool shouldRestart() { return _restartPending && (millis() >= _restartTime); }
     
+    // HEAP OPTIMIZATION: Memory monitoring functions
+    size_t getFreeHeap() { return ESP.getFreeHeap(); }
+    size_t getTotalHeap() { return ESP.getHeapSize(); }
+    size_t getHeapUsagePercent() { return (100 - ((ESP.getFreeHeap() * 100) / ESP.getHeapSize())); }
+    bool isHeapCritical() { return ESP.getFreeHeap() < 32768; } // Less than 32KB is critical
+    bool isHeapWarning() { return ESP.getFreeHeap() < 65536; }  // Less than 64KB is warning
+    
     // IMPORTANT: Non-blocking restart check - call from main loop
     // Uses millis() comparison - NO delay() calls ever!
     void checkRestart();

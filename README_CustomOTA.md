@@ -1,16 +1,22 @@
-# Custom OTA Implementation for ESP32
+# Custom OTA Implementation for ESP32 Projects
 
 This custom OTA implementation replaces PrettyOTA with enhanced functionality including:
 
-## Recent Updates (v1.2.2)
+## Recent Updates (v1.2.4)
 
-### ✅ Critical Bug Fixes
+### 🐞 Bug Fixes
+- Serial upload boot partition inconsistency fixed
+- OTA boot state correction and partition validation
+
+### ✨ Enhanced Features
+- Boot partition management and startup validation
+- Error recovery for partition state mismatches
 - **Fixed Upload Progress** - Progress bar now works correctly (0% → 100%)
 - **Fixed Unexpected Reboot Dialogs** - Reboot confirmation removed from upload process
 - **Fixed Routing Issues** - Added missing POST route for proper file uploads
 - **Enhanced Error Handling** - Better handling of network disconnections during reboot
 
-## Features
+## Features (v1.2.4)
 
 ✅ **Reboot Functionality** - Manual device reboot capability
 ✅ **Rollback Support** - Ability to rollback to previous firmware
@@ -18,7 +24,7 @@ This custom OTA implementation replaces PrettyOTA with enhanced functionality in
 ✅ **Drag & Drop Interface** - Modern file upload interface
 ✅ **Authentication** - Password protection for OTA operations
 ✅ **Status Monitoring** - Real-time system status information
-✅ **Custom Branding** - Branded interface
+✅ **Custom Branding** - Easily customizable interface for your project
 
 ## Usage
 
@@ -35,7 +41,7 @@ void setup() {
     otaUpdater.begin(&server, "admin", "password");
     
     // Set hardware information
-    otaUpdater.setHardwareID("MyDevice 1.0");
+   otaUpdater.setHardwareID("MyDevice 3.0.2");
     otaUpdater.setFirmwareVersion("3.0.7");
     
     server.begin();
@@ -44,8 +50,8 @@ void setup() {
 
 ### Accessing the OTA Interface
 
-1. Connect to the device WiFi AP
-2. Navigate to: `http://192.168.4.1/update`
+1. Connect to your device's WiFi AP
+2. Navigate to: `http://<device-ip>/update`
 3. Login with credentials (default: admin/password)
 
 ### Interface Features
@@ -66,7 +72,7 @@ void setup() {
 - Free heap memory
 - Flash memory size
 
-### API Endpoints
+### API Endpoints (v1.2.4)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -119,7 +125,7 @@ The interface can be customized by modifying the HTML in `CustomOTA.cpp`:
 - Add additional system information
 - Customize button layouts
 
-## Migration from PrettyOTA
+## Migration from PrettyOTA (v1.2.4)
 
 If migrating from PrettyOTA, replace:
 
@@ -143,7 +149,7 @@ otaUpdater.setHardwareID("Hardware");
 otaUpdater.setFirmwareVersion("1.0.0");
 ```
 
-## Troubleshooting
+## Troubleshooting (v1.2.4)
 
 ### Common Issues
 

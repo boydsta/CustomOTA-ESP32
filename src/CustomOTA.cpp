@@ -86,37 +86,43 @@ const esp_partition_t* find_partition_by_label(const char* label) {
 }
 // Helper function to format build date from __DATE__ to dd/mm/yyyy format
 String formatBuildDate() {
-    String date = __DATE__;  // Format: "Jul 30 2025"
-    String time = __TIME__;  // Format: "14:30:25"
+    // HEAP OPTIMIZATION: Use const char* and minimize String operations
+    const char* date = __DATE__;  // Format: "Jul 30 2025"
+    const char* time = __TIME__;  // Format: "14:30:25"
     
-    // Month name to number mapping
-    String months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    // Month name to number mapping - use const array for efficiency
+    static const char* months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     
-    // Parse the date string
-    String month = date.substring(0, 3);
-    String day = date.substring(4, 6);
-    String year = date.substring(7, 11);
+    // Parse the date string using more efficient approach
+    char month[4];
+    strncpy(month, date, 3);
+    month[3] = '\0';
     
-    // Remove leading space from day if present
-    day.trim();
+    // Extract day and year using pointer arithmetic
+    const char* dayPtr = date + 4;
+    const char* yearPtr = date + 7;
     
-    // Convert month name to number
-    String monthNum = "01";
+    // Skip leading space in day if present
+    if (*dayPtr == ' ') dayPtr++;
+    
+    // Find month number efficiently
+    int monthNum = 1;
     for (int i = 0; i < 12; i++) {
-        if (month == months[i]) {
-            monthNum = (i + 1 < 10) ? "0" + String(i + 1) : String(i + 1);
+        if (strcmp(month, months[i]) == 0) {
+            monthNum = i + 1;
             break;
         }
     }
     
-    // Ensure day has leading zero if needed
-    if (day.length() == 1) {
-        day = "0" + day;
-    }
+    // Parse day number
+    int dayNum = atoi(dayPtr);
     
-    // Return formatted date: dd/mm/yyyy hh:mm:ss
-    return day + "/" + monthNum + "/" + year + " " + time;
+    // Build result using snprintf for efficiency
+    char result[32];
+    snprintf(result, sizeof(result), "%02d/%02d/%s %s", dayNum, monthNum, yearPtr, time);
+    
+    return String(result);
 }
 
 CustomOTA::CustomOTA() {
@@ -331,180 +337,27 @@ String CustomOTA::generateOTAPage() {
     // Check if SPIFFS partition exists
     bool hasSpiffsPartition = checkSpiffsPartition();
     
-    // Get current partition info
-    const esp_partition_t* running_partition = esp_ota_get_running_partition();
-    String partitionInfo = "Unknown";
-    String partitionStatus = "";
-    String partitionDetails = "";
-    
-    if (running_partition) {
-        partitionInfo = String(running_partition->label);
-        
-        // Build detailed partition table information
-        partitionDetails += "<h3>Partition Table Details</h3>";
-        partitionDetails += "<table style='border-collapse: collapse; width: 100%; margin: 10px 0;'>";
-        partitionDetails += "<tr style='background-color: #ddd; border: 1px solid #000;'>";
-        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Label</th>";
-        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Type</th>";
-        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Subtype</th>";
-        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Offset</th>";
-        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Size</th>";
-        partitionDetails += "<th style='padding: 8px; border: 1px solid #000;'>Status</th>";
-        partitionDetails += "</tr>";
-        
-        // Iterate through all partitions
-        esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
-        
-        while (it != nullptr) {
-            const esp_partition_t* part = esp_partition_get(it);
-            if (part) {
-                String typeStr = "";
-                String subtypeStr = "";
-                String statusStr = "";
-                String rowStyle = "";
-                
-                // Determine partition type
-                switch (part->type) {
-                    case ESP_PARTITION_TYPE_APP:
-                        typeStr = "APP";
-                        switch (part->subtype) {
-                            case ESP_PARTITION_SUBTYPE_APP_FACTORY: subtypeStr = "Factory"; break;
-                            case ESP_PARTITION_SUBTYPE_APP_OTA_0: subtypeStr = "OTA_0"; break;
-                            case ESP_PARTITION_SUBTYPE_APP_OTA_1: subtypeStr = "OTA_1"; break;
-                            default: subtypeStr = "OTA_" + String(part->subtype - ESP_PARTITION_SUBTYPE_APP_OTA_0);
-                        }
-                        
-                        // Check if partition has firmware
-                        if (part->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_0 || part->subtype == ESP_PARTITION_SUBTYPE_APP_OTA_1 || part->subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY) {
-                            uint32_t first_word;
-                            esp_err_t err = esp_partition_read(part, 0, &first_word, sizeof(first_word));
-                            if (err == ESP_OK && first_word != 0xFFFFFFFF) {
-                                statusStr = "Has Firmware";
-                                if (strcmp(part->label, running_partition->label) == 0) {
-                                    statusStr += " (Running)";
-                                    rowStyle = " style='background-color: #c8e6c9; font-weight: bold;'";
-                                } else {
-                                    statusStr += " (Backup)";
-                                    rowStyle = " style='background-color: #fff3e0;'";
-                                }
-                            } else {
-                                statusStr = "Empty";
-                            }
-                        }
-                        break;
-                        
-                    case ESP_PARTITION_TYPE_DATA:
-                        typeStr = "DATA";
-                        switch (part->subtype) {
-                            case ESP_PARTITION_SUBTYPE_DATA_OTA: subtypeStr = "OTA Data"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_PHY: subtypeStr = "PHY Init"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_NVS: subtypeStr = "NVS"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_COREDUMP: subtypeStr = "Core Dump"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS: subtypeStr = "NVS Keys"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_EFUSE_EM: subtypeStr = "eFuse Emul"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_ESPHTTPD: subtypeStr = "ESP HTTP"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_FAT: subtypeStr = "FAT"; break;
-                            case ESP_PARTITION_SUBTYPE_DATA_SPIFFS: 
-                                subtypeStr = "SPIFFS"; 
-                                statusStr = _spiffsMounted ? "Mounted" : "Available";
-                                rowStyle = " style='background-color: #e1f5fe;'";
-                                break;
-                            default: subtypeStr = "Unknown (" + String(part->subtype, HEX) + ")";
-                        }
-                        break;
-                        
-                    default:
-                        typeStr = "Unknown (" + String(part->type, HEX) + ")";
-                        subtypeStr = String(part->subtype, HEX);
-                }
-                
-                // Format sizes in human readable format
-                String sizeStr = "";
-                if (part->size >= 1024 * 1024) {
-                    sizeStr = String(part->size / (1024 * 1024)) + " MB";
-                } else if (part->size >= 1024) {
-                    sizeStr = String(part->size / 1024) + " KB";
-                } else {
-                    sizeStr = String(part->size) + " B";
-                }
-                
-                String offsetStr = "0x" + String(part->address, HEX);
-                
-                partitionDetails += "<tr" + rowStyle + ">";
-                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + String(part->label) + "</td>";
-                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + typeStr + "</td>";
-                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + subtypeStr + "</td>";
-                partitionDetails += "<td style='padding: 6px; border: 1px solid #000; font-family: monospace;'>" + offsetStr + "</td>";
-                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + sizeStr + "</td>";
-                partitionDetails += "<td style='padding: 6px; border: 1px solid #000;'>" + statusStr + "</td>";
-                partitionDetails += "</tr>";
-            }
-            it = esp_partition_next(it);
-        }
-        
-        esp_partition_iterator_release(it);
-        partitionDetails += "</table>";
-        
-        // Check both partitions for firmware (simplified status for header)
-        const esp_partition_t* app0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
-        const esp_partition_t* app1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-
-        String app0_status = "Empty";
-        String app1_status = "Empty";
-
-        // Check app0 partition
-        if (app0) {
-            uint32_t cotaFirstWord;
-            esp_err_t cotaErr = esp_partition_read(app0, 0, &cotaFirstWord, sizeof(cotaFirstWord));
-            if (cotaErr == ESP_OK && cotaFirstWord != 0xFFFFFFFF) {
-                app0_status = "Has Firmware";
-                if (strcmp(running_partition->label, app0->label) == 0) {
-                    app0_status += " (Current)";
-                }
-            }
-        }
-
-        // Check app1 partition
-        if (app1) {
-            uint32_t cotaFirstWord1;
-            esp_err_t cotaErr1 = esp_partition_read(app1, 0, &cotaFirstWord1, sizeof(cotaFirstWord1));
-            if (cotaErr1 == ESP_OK && cotaFirstWord1 != 0xFFFFFFFF) {
-                app1_status = "Has Firmware";
-                if (strcmp(running_partition->label, app1->label) == 0) {
-                    app1_status += " (Current)";
-                }
-            }
-        }
-
-        // Build dynamic partition status display
-        if (app0 && app1) {
-            String app0_label = String(app0->label);
-            String app1_label = String(app1->label);
-            partitionStatus = app0_label + ": " + app0_status + ", " + app1_label + ": " + app1_status;
-        } else {
-            // Fallback for single partition or other configurations
-            partitionStatus = "Current: " + partitionInfo;
-        }
-
-        // Set backup status based on other partition having firmware
-        const esp_partition_t* other_partition = nullptr;
-        if (app0 && strcmp(running_partition->label, app0->label) == 0) {
-            other_partition = app1;
-        } else if (app1 && strcmp(running_partition->label, app1->label) == 0) {
-            other_partition = app0;
-        }
-
-        if (other_partition) {
-            uint32_t first_word;
-            esp_err_t err = esp_partition_read(other_partition, 0, &first_word, sizeof(first_word));
-            _hasValidBackup = (err == ESP_OK && first_word != 0xFFFFFFFF);
-        } else {
-            _hasValidBackup = false;
-        }
+    // Build rollback button section
+    String rollbackButton;
+    if (isSingleOtaPartition || !hasOtaDataPartition()) {
+        rollbackButton = "";
+    } else if (_hasValidBackup) {
+        rollbackButton = F(R"rawliteral(
+        <button class="grey-button" onclick="rollbackFirmware()">
+            ⏪ Rollback
+        </button>)rawliteral");
+    } else {
+        rollbackButton = F(R"rawliteral(
+        <button class="grey-button" onclick="alert('Rollback functionality available - ESP32 dual partition system automatically preserves previous firmware')" title="ESP32 dual partition system automatically preserves previous firmware - rollback available when other partition has valid firmware">
+            🛡️ Enable Rollback
+        </button>)rawliteral");
     }
     
-    String html = R"rawliteral(
-<!DOCTYPE html>
+    // Build HTML
+    String html;
+    
+    // Build HTML using original approach with optimization tweaks
+    html = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -707,33 +560,6 @@ String CustomOTA::generateOTAPage() {
             font-weight: bold;
         }
         
-        .heap-critical {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        
-        .heap-display {
-            display: inline-block;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 14px;
-        }
-        
-        .heap-healthy {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        
-        .heap-warning {
-            background-color: #fff3cd;
-            color: #856404;
-        }
-        
-        .heap-critical {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        
         .radio-group {
             margin: 20px 0;
         }
@@ -759,15 +585,9 @@ String CustomOTA::generateOTAPage() {
     <h1>🔄 CustomOTA Update</h1>
     
     <div class="full-width-box">
-        <h2>System Information</h2>
-        <p><strong>Firmware Version:</strong> )rawliteral" + _firmwareVersion + R"rawliteral(</p>
+        <h2>Firmware Information</h2>
+        <p><strong>Version:</strong> )rawliteral" + _firmwareVersion + R"rawliteral(</p>
         <p><strong>Build Date:</strong> )rawliteral" + _buildTimestamp + R"rawliteral(</p>
-        <p><strong>Running Partition:</strong> )rawliteral" + partitionInfo + R"rawliteral(</p>
-        <p><strong>Partition Status:</strong> )rawliteral" + partitionStatus + R"rawliteral(</p>
-        <p><strong>Free Heap:</strong> <span id="freeHeap">)rawliteral" + String(ESP.getFreeHeap() / 1024) + R"rawliteral(</span> KB (<span id="heapPercent">)rawliteral" + String((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) + R"rawliteral(</span>%) <span id="heapStatus" class="heap-display )rawliteral" + String(((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 50 ? "heap-healthy" : ((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 25 ? "heap-warning" : "heap-critical") + R"rawliteral(">)rawliteral" + String(((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 50 ? "🟢 Healthy" : ((ESP.getFreeHeap() * 100) / ESP.getHeapSize()) >= 25 ? "🟡 Warning" : "🔴 Critical") + R"rawliteral(</span></p>
-        <p><strong>Flash Size:</strong> )rawliteral" + String(ESP.getFlashChipSize() / (1024 * 1024)) + R"rawliteral(MB</p>
-        <p><strong>SPIFFS Partition:</strong> )rawliteral" + String(hasSpiffsPartition ? "Available" : "Not Available") + R"rawliteral(</p>
-        <p><strong>SPIFFS Mount:</strong> <span id="spiffsStatus">)rawliteral" + String(_spiffsMounted ? "Mounted" : "Failed") + R"rawliteral(</span></p>
     </div>
     
     <hr>
@@ -837,34 +657,38 @@ String CustomOTA::generateOTAPage() {
         let cotaUpdateType = 'firmware';
         
         function updateTypeChanged() {
-            const selected = document.querySelector('input[name="updateType"]:checked').value;
-            cotaUpdateType = selected;
+            const selectedEl = document.querySelector('input[name="updateType"]:checked');
+            cotaUpdateType = (selectedEl && selectedEl.value) ? selectedEl.value : 'firmware';
             
             const titleElement = document.getElementById('uploadTitle');
             const descElement = document.getElementById('uploadDescription');
             const buttonElement = document.getElementById('uploadBtn');
             
-            if (cotaUpdateType === 'firmware') {
-                titleElement.textContent = '📁 Select Firmware File';
-                descElement.textContent = 'Click here to browse for your firmware .bin file';
-                buttonElement.textContent = '🚀 Upload';
-            } else {
-                titleElement.textContent = '📁 Select Filesystem File';
-                descElement.textContent = 'Click here to browse for your filesystem.bin file';
-                buttonElement.textContent = '💾 Upload';
+            if (titleElement && descElement && buttonElement) {
+                if (cotaUpdateType === 'firmware') {
+                    titleElement.textContent = '📁 Select Firmware File';
+                    descElement.textContent = 'Click here to browse for your firmware .bin file';
+                    buttonElement.textContent = '🚀 Upload';
+                } else {
+                    titleElement.textContent = '📁 Select Filesystem File';
+                    descElement.textContent = 'Click here to browse for your filesystem.bin file';
+                    buttonElement.textContent = '💾 Upload';
+                }
+                
+                // Reset file selection
+                cotaSelectedFile = null;
+                const fileInput = document.getElementById('updateFile');
+                if (fileInput) fileInput.value = '';
+                buttonElement.disabled = true;
             }
-            
-            // Reset file selection
-            cotaSelectedFile = null;
-            document.getElementById('updateFile').value = '';
-            buttonElement.disabled = true;
         }
         
         function handleFileSelect(input) {
-            const cotaFile = input.files[0];
-            if (cotaFile && cotaFile.name.endsWith('.bin')) {
+            const cotaFile = (input && input.files && input.files.length > 0) ? input.files[0] : null;
+            if (cotaFile && cotaFile.name && cotaFile.name.toLowerCase().endsWith('.bin')) {
                 cotaSelectedFile = cotaFile;
-                document.getElementById('uploadBtn').disabled = false;
+                const uploadBtn = document.getElementById('uploadBtn');
+                if (uploadBtn) uploadBtn.disabled = false;
                 showStatus('File selected: ' + cotaFile.name + ' (' + cotaUpdateType + ' update)', 'info');
             } else {
                 showStatus('Please select a valid .bin file', 'error');
@@ -873,14 +697,17 @@ String CustomOTA::generateOTAPage() {
         
         function showStatus(message, type) {
             const statusDiv = document.getElementById('statusMessage');
+            if (!statusDiv) return;
             statusDiv.textContent = message;
-            statusDiv.className = 'status ' + type;
+            statusDiv.className = 'status ' + (type || 'info');
             statusDiv.style.display = 'block';
         }
         
         function updateProgress(percent) {
-            document.getElementById('progressFill').style.width = percent + '%';
-            document.getElementById('progressText').textContent = percent + '%';
+            const fill = document.getElementById('progressFill');
+            const text = document.getElementById('progressText');
+            if (fill) fill.style.width = percent + '%';
+            if (text) text.textContent = percent + '%';
         }
         
         function uploadUpdate() {
@@ -1115,61 +942,7 @@ Continue with filesystem update?`;
             }
         }
         
-        // Auto-refresh heap memory every 5 seconds
-        setInterval(() => {
-            fetch('/update/status')
-                .then(response => response.json())
-                .then(data => {
-                    if (document.getElementById('freeHeap')) {
-                        document.getElementById('freeHeap').textContent = data.freeHeap || 'Unknown';
-                    }
-                    
-                    // Update heap percentage and status
-                    if (document.getElementById('heapPercent') && document.getElementById('heapStatus')) {
-                        const freeHeap = parseInt(data.freeHeap) || 0;
-                        const totalHeap = data.totalHeap || 327680; // Default ESP32 heap size
-                        const percentage = Math.round((freeHeap * 100) / totalHeap);
-                        
-                        document.getElementById('heapPercent').textContent = percentage;
-                        
-                        const heapStatus = document.getElementById('heapStatus');
-                        
-                        if (percentage >= 50) {
-                            heapStatus.textContent = '🟢 Healthy';
-                            heapStatus.className = 'heap-display heap-healthy';
-                        } else if (percentage >= 25) {
-                            heapStatus.textContent = '🟡 Warning';
-                            heapStatus.className = 'heap-display heap-warning';
-                        } else {
-                            heapStatus.textContent = '🔴 Critical';
-                            heapStatus.className = 'heap-display heap-critical';
-                        }
-                    }
-                    
-                    // Update SPIFFS status display
-                    if (document.getElementById('spiffsStatus')) {
-                        const spiffsStatus = document.getElementById('spiffsStatus');
-                        const spiffsMounted = data.spiffsMounted === true;
-                        const hasSpiffsPartition = data.hasSpiffsPartition === true;
-                        
-                        if (hasSpiffsPartition) {
-                            spiffsStatus.textContent = spiffsMounted ? 'Mounted' : 'Not Mounted';
-                            spiffsStatus.className = spiffsMounted ? 'status-good' : 'status-warning';
-                        } else {
-                            spiffsStatus.textContent = 'No Partition';
-                            spiffsStatus.className = 'status-error';
-                        }
-                    }
-                })
-                .catch(() => {
-                    // Ignore errors for status updates
-                });
-        }, 5000);
     </script>
-
-    <hr>
-    
-    )rawliteral" + partitionDetails + R"rawliteral(
 
 </body>
 </html>
@@ -1227,19 +1000,19 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         
         // Check POST parameters first (multipart form data)
         if (request->hasParam("type", true)) {
-            String type = request->getParam("type", true)->value();
-            if (type == "filesystem") {
+            const char* typeValue = request->getParam("type", true)->value().c_str();
+            if (strcmp(typeValue, "filesystem") == 0) {
                 _updateType = 1;
             }
-            COTA_DEBUG_PRINTF("CustomOTA: Found type in POST params: %s\n", type.c_str());
+            COTA_DEBUG_PRINTF("CustomOTA: Found type in POST params: %s\n", typeValue);
         }
         // Fallback to URL parameters
         else if (request->hasParam("type", false)) {
-            String type = request->getParam("type", false)->value();
-            if (type == "filesystem") {
+            const char* typeValue = request->getParam("type", false)->value().c_str();
+            if (strcmp(typeValue, "filesystem") == 0) {
                 _updateType = 1;
             }
-            COTA_DEBUG_PRINTF("CustomOTA: Found type in URL params: %s\n", type.c_str());
+            COTA_DEBUG_PRINTF("CustomOTA: Found type in URL params: %s\n", typeValue);
         }
         // Additional check - look at filename for hints
         else if (filename.indexOf("filesystem") >= 0 || filename.indexOf("spiffs") >= 0) {
@@ -1253,7 +1026,13 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         // Initialize update state immediately
         _updateInProgress = true;
         _updateProgress = 0;
-        _updateStatus = "Starting " + String(_updateType == 0 ? "firmware" : "filesystem") + " update...";
+        
+        // HEAP OPTIMIZATION: Use more efficient status string construction
+        if (_updateType == 0) {
+            _updateStatus = F("Starting firmware update...");
+        } else {
+            _updateStatus = F("Starting filesystem update...");
+        }
         
         COTA_DEBUG_PRINTF("CustomOTA: Emergency init complete - Type: %s\n", _updateType == 0 ? "firmware" : "filesystem");
     }
@@ -1269,18 +1048,16 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
     if (index == 0) {
         COTA_DEBUG_PRINTLN("==========================================");
         COTA_DEBUG_PRINTF("CustomOTA: Update Start: %s (%s)\n", filename.c_str(), _updateType == 0 ? "firmware" : "filesystem");
-        COTA_DEBUG_PRINTF("CustomOTA: Free heap before update: %d bytes\n", ESP.getFreeHeap());
         
-        // Check available heap before starting update
+        // HEAP OPTIMIZATION: Check heap before major memory allocation
         size_t freeHeap = ESP.getFreeHeap();
-        size_t minHeapRequired = 32768; // 32KB minimum for OTA operations
+        const size_t minHeapRequired = 32768; // 32KB minimum for OTA operations
         
-        COTA_DEBUG_PRINT("CustomOTA: Available heap: ");
-        COTA_DEBUG_PRINT(freeHeap);
-        COTA_DEBUG_PRINTLN(" bytes");
+        COTA_DEBUG_PRINTF("CustomOTA: Free heap before update: %d bytes\n", freeHeap);
+        COTA_DEBUG_PRINTF("CustomOTA: Required heap: %d bytes\n", minHeapRequired);
         
         if (freeHeap < minHeapRequired) {
-            _updateStatus = "Insufficient memory for update";
+            _updateStatus = F("Insufficient memory for update");
             _updateInProgress = false;
             COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Insufficient heap for OTA update");
             COTA_DEBUG_PRINTLN("==========================================");
@@ -1315,7 +1092,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
     if (len > 0) {
         size_t cotaBytesWritten = Update.write(data, len);
         if (cotaBytesWritten != len) {
-            _updateStatus = "Update write failed";
+            _updateStatus = F("Update write failed");
             _updateInProgress = false;
             COTA_DEBUG_PRINTF("CustomOTA: ERROR - Write failed: attempted %d bytes, wrote %d bytes\n", len, cotaBytesWritten);
             #if CUSTOM_OTA_DEBUG
@@ -1324,12 +1101,21 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             return;
         }
         
-        // Update progress
+        // Update progress - HEAP OPTIMIZATION: avoid String concatenation in loops
         _updateProgress = (Update.progress() * 100) / Update.size();
-        String updateTypeName = _updateType == 0 ? "Firmware" : "Filesystem";
-        _updateStatus = "Uploading " + updateTypeName + "... " + String(_updateProgress) + "%";
         
-        // Print progress every 10%
+        // HEAP OPTIMIZATION: Only update status string when progress changes significantly
+        static int lastStatusUpdate = -1;
+        if (_updateProgress != lastStatusUpdate && (_updateProgress % 5 == 0 || _updateProgress != lastStatusUpdate)) {
+            // Build status efficiently using fixed buffer
+            static char statusBuffer[64];
+            const char* updateTypeName = _updateType == 0 ? "Firmware" : "Filesystem";
+            snprintf(statusBuffer, sizeof(statusBuffer), "Uploading %s... %d%%", updateTypeName, _updateProgress);
+            _updateStatus = String(statusBuffer);
+            lastStatusUpdate = _updateProgress;
+        }
+        
+        // Print progress every 10% - HEAP OPTIMIZATION: avoid repeated print calls
         static int cotaLastProgress = -1;
         if (_updateProgress >= cotaLastProgress + 10) {
             COTA_DEBUG_PRINTF("CustomOTA: Upload progress: %d%% (%d bytes)\n", _updateProgress, Update.progress());
@@ -1345,7 +1131,13 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         
         if (Update.end(true)) {
             COTA_DEBUG_PRINTF("CustomOTA: Update Success: %uB\n", index + len);
-            _updateStatus = String(_updateType == 0 ? "Firmware" : "Filesystem") + " update completed successfully";
+            
+            // HEAP OPTIMIZATION: Use efficient status string construction
+            if (_updateType == 0) {
+                _updateStatus = F("Firmware update completed successfully");
+            } else {
+                _updateStatus = F("Filesystem update completed successfully");
+            }
             _updateInProgress = false;
             
             // Save update info
@@ -1394,7 +1186,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             }
             COTA_DEBUG_PRINTLN("==========================================");
         } else {
-            _updateStatus = "Update failed";
+            _updateStatus = F("Update failed");
             _updateInProgress = false;
             COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Update.end() failed:");
             #if CUSTOM_OTA_DEBUG
@@ -1455,20 +1247,42 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
 }
 
 void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
-    String json = "{";
-    json += "\"inProgress\":" + String(_updateInProgress ? "true" : "false") + ",";
-    json += "\"progress\":" + String(_updateProgress) + ",";
-    json += "\"status\":\"" + _updateStatus + "\",";
-    json += "\"hasBackup\":" + String(_hasValidBackup ? "true" : "false") + ",";
-    json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
-    json += "\"totalHeap\":" + String(ESP.getHeapSize()) + ",";
-    json += "\"spiffsMounted\":" + String(_spiffsMounted ? "true" : "false") + ",";
-    json += "\"hasSpiffsPartition\":" + String(_hasSpiffsPartition ? "true" : "false") + ",";
-    json += "\"version\":\"" + _firmwareVersion + "\",";
-    json += "\"buildTimestamp\":\"" + _buildTimestamp + "\"";
-    json += "}";
+    // HEAP OPTIMIZATION: Use efficient JSON building with minimal String operations
+    char jsonBuffer[512];
+    size_t freeHeap = ESP.getFreeHeap();
+    size_t totalHeap = ESP.getHeapSize();
+    size_t heapPercent = (freeHeap * 100) / totalHeap;
     
-    request->send(200, "application/json", json);
+    snprintf(jsonBuffer, sizeof(jsonBuffer),
+        "{"
+        "\"inProgress\":%s,"
+        "\"progress\":%d,"
+        "\"status\":\"%s\","
+        "\"hasBackup\":%s,"
+        "\"freeHeap\":%zu,"
+        "\"totalHeap\":%zu,"
+        "\"heapPercent\":%zu,"
+        "\"heapCritical\":%s,"
+        "\"spiffsMounted\":%s,"
+        "\"hasSpiffsPartition\":%s,"
+        "\"version\":\"%s\","
+        "\"buildTimestamp\":\"%s\""
+        "}",
+        _updateInProgress ? "true" : "false",
+        _updateProgress,
+        _updateStatus.c_str(),
+        _hasValidBackup ? "true" : "false",
+        freeHeap,
+        totalHeap,
+        heapPercent,
+        (freeHeap < 32768) ? "true" : "false", // Critical if less than 32KB
+        _spiffsMounted ? "true" : "false",
+        _hasSpiffsPartition ? "true" : "false",
+        _firmwareVersion.c_str(),
+        _buildTimestamp.c_str()
+    );
+    
+    request->send(200, "application/json", jsonBuffer);
 }
 
 bool CustomOTA::createBackup() {
