@@ -588,6 +588,8 @@ String CustomOTA::generateOTAPage() {
         <h2>Firmware Information</h2>
         <p><strong>Version:</strong> )rawliteral" + _firmwareVersion + R"rawliteral(</p>
         <p><strong>Build Date:</strong> )rawliteral" + _buildTimestamp + R"rawliteral(</p>
+        <p><strong>Running Partition:</strong> )rawliteral" + String(esp_ota_get_running_partition() ? esp_ota_get_running_partition()->label : "UNKNOWN") + R"rawliteral(</p>
+        <p><strong>Backup Partition:</strong> )rawliteral" + get_backup_partition_label(esp_ota_get_running_partition() ? esp_ota_get_running_partition()->label : "") + R"rawliteral(</p>
     </div>
     
     <hr>
