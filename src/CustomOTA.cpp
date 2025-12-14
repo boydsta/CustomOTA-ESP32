@@ -17,7 +17,7 @@
  * Created by Boyd Benton
  * Maintains real-time compatibility throughout all operations
  */
-
+#define CUSTOM_OTA_DEBUG 0
 #include "CustomOTA.h"
 #include <esp_partition.h>
 
@@ -788,8 +788,8 @@ Continue with filesystem update?`;
                                     window.location.reload();
                                 }, 3000); // Shorter timeout for filesystem
                             }
-                        } else if (responseText.includes('update started')) {
-                            // 🔄 Upload process started - this is expected
+                        } else if (responseText.includes('update started') && !responseText.includes('completed')) {
+                            // 🔄 Upload process started - this is expected (only if not completed)
                             showStatus('Upload started successfully, transferring file...', 'info');
                             // Don't reload page here - wait for completion
                         } else {
@@ -989,7 +989,8 @@ void CustomOTA::handleUpdateStart(AsyncWebServerRequest *request) {
     COTA_DEBUG_PRINTLN("CustomOTA: Update initialization complete");
     COTA_DEBUG_PRINTLN("==========================================");
     
-    request->send(200, "text/plain", "Update started");
+    // Don't send response here for multipart uploads - response will be sent by handleUpdateUpload() when complete
+    // request->send(200, "text/plain", "Update started");
 }
 
 void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -1176,11 +1177,11 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                 if (SPIFFS.begin(true)) {
                     COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS remounted successfully - new files available");
                     _spiffsMounted = true;
-                    request->send(200, "text/plain", "Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
+                    request->send(200, "text/plain", "Upload completed successfully. Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
                 } else {
                     COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS remount failed, may need manual reboot");
                     _spiffsMounted = false;
-                    request->send(200, "text/plain", "Filesystem update completed but remount failed. Please reboot device manually if web interface issues occur.");
+                    request->send(200, "text/plain", "Upload completed successfully. Filesystem update completed but remount failed. Please reboot device manually if web interface issues occur.");
                 }
                 
                 // No restart needed for SPIFFS updates
