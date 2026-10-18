@@ -17,9 +17,14 @@
  * Created by Boyd Benton
  * Maintains real-time compatibility throughout all operations
  */
+#ifndef CUSTOM_OTA_DEBUG
 #define CUSTOM_OTA_DEBUG 0
+#endif
 #include "CustomOTA.h"
 #include <esp_partition.h>
+
+// OTA web page, defined further down
+extern const char COTA_OTA_PAGE[];
 
 // Helper to check for otadata partition
 bool hasOtaDataPartition() {
@@ -35,31 +40,6 @@ void detectOtaPartitionMode() {
     it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
     if (it) { count++; esp_partition_iterator_release(it); }
     isSingleOtaPartition = (count < 2);
-}
-
-// Helper functions for dynamic partition detection
-/**
- * @brief Get the partition label for the other (backup) partition
- * @param current_label The label of the currently running partition
- * @return String containing the backup partition label, or empty string if not found
- */
-String get_backup_partition_label(const char* current_label) {
-  // Get all APP partitions
-  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, nullptr);
-
-  String backup_label = "";
-  while (it != nullptr) {
-    const esp_partition_t* part = esp_partition_get(it);
-    if (part && strcmp(part->label, current_label) != 0) {
-      // Found the other partition
-      backup_label = String(part->label);
-      break;
-    }
-    it = esp_partition_next(it);
-  }
-  esp_partition_iterator_release(it);
-
-  return backup_label;
 }
 
 /**
@@ -86,6 +66,11 @@ const esp_partition_t* find_partition_by_label(const char* label) {
 }
 // Helper function to format build date from __DATE__ to dd/mm/yyyy format
 String formatBuildDate() {
+#ifdef COTA_BUILD_TIMESTAMP
+    // Set on every PlatformIO build by build_timestamp.py, already dd/mm/yyyy hh:mm:ss
+    return String(COTA_BUILD_TIMESTAMP);
+#else
+    // Fallback (e.g. Arduino IDE): when this file was last compiled
     // HEAP OPTIMIZATION: Use const char* and minimize String operations
     const char* date = __DATE__;  // Format: "Jul 30 2025"
     const char* time = __TIME__;  // Format: "14:30:25"
@@ -121,8 +106,9 @@ String formatBuildDate() {
     // Build result using snprintf for efficiency
     char result[32];
     snprintf(result, sizeof(result), "%02d/%02d/%s %s", dayNum, monthNum, yearPtr, time);
-    
+
     return String(result);
+#endif
 }
 
 CustomOTA::CustomOTA() {
@@ -135,8 +121,12 @@ CustomOTA::CustomOTA() {
     _hasValidBackup = false;
     _backupSize = 0;
     _updateType = 0; // Default to firmware
+    _uploadError = false;
+    _uploadComplete = false;
+    _lastReportedProgress = -1;
+    _server = nullptr;
     _restartPending = false;
-    _restartTime = 0;
+    _restartRequestedAt = 0;
     _restartDelay = 3000; // Default 3 seconds
     _allowSpiffsFormat = true; // Default to allowing format for compatibility
     
@@ -150,15 +140,9 @@ CustomOTA::CustomOTA() {
 
 void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* password) {
     _server = server;
-    _authenticated = false; // Default to no authentication
 
     // Detect partition mode before anything else
-    int count = 0;
-    esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr);
-    if (it) { count++; esp_partition_iterator_release(it); }
-    it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
-    if (it) { count++; esp_partition_iterator_release(it); }
-    isSingleOtaPartition = (count < 2);
+    detectOtaPartitionMode();
     
     // CRITICAL FIX: Clear any stale OTA boot partition setting after serial upload
     // This prevents the device from booting to the wrong partition after serial upload
@@ -202,11 +186,13 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     
     if (username != nullptr && password != nullptr && strlen(username) > 0 && strlen(password) > 0) {
         setCredentials(username, password);
-        _authenticated = true;
+    }
+    // Keep credentials set earlier via setCredentials() - begin(server) must not wipe them
+    _authenticated = _username.length() > 0 && _password.length() > 0;
+    if (_authenticated) {
         COTA_DEBUG_PRINTLN("CustomOTA: Authentication enabled");
-        COTA_DEBUG_PRINTF("CustomOTA: Username: %s\n", username);
+        COTA_DEBUG_PRINTF("CustomOTA: Username: %s\n", _username.c_str());
     } else {
-        _authenticated = false;
         COTA_DEBUG_PRINTLN("CustomOTA: No authentication (open access)");
     }
     
@@ -244,21 +230,8 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     
     COTA_DEBUG_PRINTLN("CustomOTA: Setting up web routes...");
     // Setup web routes
-    COTA_DEBUG_PRINTLN("CustomOTA: Registering /update route");
-    _server->on("/update", HTTP_GET, [this](AsyncWebServerRequest *request) {
-        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
-            return request->requestAuthentication();
-        }
-        AsyncWebServerResponse *response = request->beginResponse(200, "text/html", generateOTAPage());
-        // Aggressive cache-busting headers to ensure new UI is always loaded
-        response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0, private");
-        response->addHeader("Pragma", "no-cache");
-        response->addHeader("Expires", "Thu, 01 Jan 1970 00:00:00 GMT");
-        response->addHeader("Last-Modified", "Thu, 01 Jan 1970 00:00:00 GMT");
-        response->addHeader("ETag", String(millis())); // Unique ETag each time
-        request->send(response);
-    });
-    
+    // NOTE: AsyncWebServer treats "/update" as matching "/update/<anything>", and handlers
+    // are checked in registration order, so the specific /update/* routes must come first
     _server->on("/update/reboot", HTTP_POST, [this](AsyncWebServerRequest *request) {
         handleReboot(request);
     });
@@ -271,17 +244,28 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         handleStatus(request);
     });
     
-    // Add POST route for /update to handle multipart uploads
-    // NOTE: This must be registered AFTER more specific routes like /update/reboot
-    // because AsyncWebServer uses prefix matching
-    _server->on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
-        handleUpdateStart(request);
+    _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleUpdateComplete(request);
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         handleUpdateUpload(request, filename, index, data, len, final);
     });
-    
-    _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
-        handleUpdateStart(request);
+
+    COTA_DEBUG_PRINTLN("CustomOTA: Registering /update route");
+    _server->on("/update", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+            return request->requestAuthentication();
+        }
+        // Streamed straight from flash - no heap copy of the page
+        AsyncWebServerResponse *response = request->beginResponse(200, "text/html",
+            (const uint8_t*)COTA_OTA_PAGE, strlen(COTA_OTA_PAGE));
+        // The page must not be cached, so a firmware update with a new UI is always picked up
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
+    // Multipart upload route
+    _server->on("/update", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handleUpdateComplete(request);
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
         handleUpdateUpload(request, filename, index, data, len, final);
     });
@@ -330,40 +314,16 @@ void CustomOTA::refreshBackupStatus() {
     loadUpdateInfo();
 }
 
-String CustomOTA::generateOTAPage() {
-    // Add timestamp for cache busting
-    String cotaTimestamp = String(millis());
-    
-    // Check if SPIFFS partition exists
-    bool hasSpiffsPartition = checkSpiffsPartition();
-    
-    // Build rollback button section
-    String rollbackButton;
-    if (isSingleOtaPartition || !hasOtaDataPartition()) {
-        rollbackButton = "";
-    } else if (_hasValidBackup) {
-        rollbackButton = F(R"rawliteral(
-        <button class="grey-button" onclick="rollbackFirmware()">
-            ⏪ Rollback
-        </button>)rawliteral");
-    } else {
-        rollbackButton = F(R"rawliteral(
-        <button class="grey-button" onclick="alert('Rollback functionality available - ESP32 dual partition system automatically preserves previous firmware')" title="ESP32 dual partition system automatically preserves previous firmware - rollback available when other partition has valid firmware">
-            🛡️ Enable Rollback
-        </button>)rawliteral");
-    }
-    
-    // Build HTML
-    String html;
-    
-    // Build HTML using original approach with optimization tweaks
-    html = R"rawliteral(<!DOCTYPE html>
+// HEAP OPTIMIZATION: The OTA page is a constant in flash and is streamed straight from there,
+// so serving it costs no heap. Device-specific values are filled in by the page's script
+// from /update/status.
+const char COTA_OTA_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Over The Air Update</title>
-    <link rel="stylesheet" href="/styles.css?v=)rawliteral" + cotaTimestamp + R"rawliteral(">
+    <script>document.write('<link rel="stylesheet" href="/styles.css?v=' + Date.now() + '">');</script>
     <style>
         /* Base styles - fallback if external CSS fails */
         body {
@@ -582,14 +542,14 @@ String CustomOTA::generateOTAPage() {
         <button class="button" onclick="window.location.href='/'">Home</button>
     </div>
     
-    <h1>🔄 CustomOTA Update</h1>
+    <h1 id="deviceName">CustomOTA Update</h1>
     
     <div class="full-width-box">
         <h2>Firmware Information</h2>
-        <p><strong>Version:</strong> )rawliteral" + _firmwareVersion + R"rawliteral(</p>
-        <p><strong>Build Date:</strong> )rawliteral" + _buildTimestamp + R"rawliteral(</p>
-        <p><strong>Running Partition:</strong> )rawliteral" + String(esp_ota_get_running_partition() ? esp_ota_get_running_partition()->label : "UNKNOWN") + R"rawliteral(</p>
-        <p><strong>Backup Partition:</strong> )rawliteral" + get_backup_partition_label(esp_ota_get_running_partition() ? esp_ota_get_running_partition()->label : "") + R"rawliteral(</p>
+        <p><strong>Version:</strong> <span id="fwVersion"></span></p>
+        <p><strong>Build Date:</strong> <span id="fwBuild"></span></p>
+        <p><strong>Running Partition:</strong> <span id="fwRunning"></span></p>
+        <p><strong>Backup Partition:</strong> <span id="fwBackup"></span></p>
     </div>
     
     <hr>
@@ -600,26 +560,20 @@ String CustomOTA::generateOTAPage() {
             <label>
                 <input type="radio" name="updateType" value="firmware" checked onchange="updateTypeChanged()"> 
                 <strong>Firmware Update</strong> - Update the main application code (.bin file)
-            </label>)rawliteral" + 
-            
-            (hasSpiffsPartition ? 
-                R"rawliteral(
-            <label>
-                <input type="radio" name="updateType" value="filesystem" onchange="updateTypeChanged()"> 
+            </label>
+            <label id="fsOption" style="display: none;">
+                <input type="radio" name="updateType" value="filesystem" onchange="updateTypeChanged()">
                 <strong>Filesystem Update</strong> - Update web files, data, and configuration (filesystem.bin file)
-            </label>)rawliteral" : 
-                R"rawliteral(
-            <label style="color: #666; font-style: italic;">
-                <input type="radio" name="updateType" value="filesystem" disabled> 
+            </label>
+            <label id="fsUnavailable" style="display: none; color: #666; font-style: italic;">
+                <input type="radio" disabled>
                 <strong>Filesystem Update</strong> - Not available (no SPIFFS partition found)
-            </label>)rawliteral") + 
-            
-            R"rawliteral(
+            </label>
         </div>
     </div>
     
     <div class="upload-area" onclick="document.getElementById('updateFile').click();">
-        <h2 id="uploadTitle">📁 Select Firmware File</h2>
+        <h2 id="uploadTitle">Select Firmware File</h2>
         <p id="uploadDescription">Click here to browse for your .bin file</p>
         <input type="file" id="updateFile" class="file-input" accept=".bin" onchange="handleFileSelect(this)">
     </div>
@@ -633,31 +587,56 @@ String CustomOTA::generateOTAPage() {
     
     <div class="button-container">
         <button class="grey-button" id="uploadBtn" onclick="uploadUpdate()" disabled>
-            🚀 Upload
-        </button>)rawliteral"
-        + (
-            (isSingleOtaPartition || !hasOtaDataPartition())
-            ? String("")
-            : (_hasValidBackup ?
-                R"rawliteral(
-        <button class="grey-button" onclick="rollbackFirmware()">
-            ⏪ Rollback
-        </button>)rawliteral"
-                : R"rawliteral(
-        <button class="grey-button" onclick="alert('Rollback functionality available - ESP32 dual partition system automatically preserves previous firmware')" title="ESP32 dual partition system automatically preserves previous firmware - rollback available when other partition has valid firmware">
-            � Enable Rollback
-        </button>)rawliteral")
-        )
-        + R"rawliteral(
+            Upload
+        </button>
+        <button class="grey-button" id="rollbackBtn" style="display: none;" onclick="rollbackFirmware()">
+            Rollback
+        </button>
+        <button class="grey-button" id="noBackupBtn" style="display: none;" onclick="alert('Rollback functionality available - ESP32 dual partition system automatically preserves previous firmware')" title="ESP32 dual partition system automatically preserves previous firmware - rollback available when other partition has valid firmware">
+            Enable Rollback
+        </button>
         <button class="grey-button" onclick="rebootDevice()">
-            🔄 Reboot
+            Reboot
         </button>
     </div>
 
     <script>
         let cotaSelectedFile = null;
         let cotaUpdateType = 'firmware';
-        
+
+        // Device details come from /update/status so the page itself can be served from flash
+        function loadDeviceInfo() {
+            fetch('/update/status', { cache: 'no-store' })
+                .then(r => r.json())
+                .then(s => {
+                    if (s.hardwareID) {
+                        document.getElementById('deviceName').textContent = s.hardwareID;
+                        document.title = s.hardwareID + ' - OTA Update';
+                    }
+                    document.getElementById('fwVersion').textContent = s.version || 'Unknown';
+                    document.getElementById('fwBuild').textContent = s.buildTimestamp || 'Unknown';
+                    document.getElementById('fwRunning').textContent = s.runningPartition || 'UNKNOWN';
+                    document.getElementById('fwBackup').textContent = s.backupPartition || 'None';
+                    document.getElementById(s.hasSpiffsPartition ? 'fsOption' : 'fsUnavailable').style.display = '';
+                    if (s.canRollback) {
+                        document.getElementById(s.hasBackup ? 'rollbackBtn' : 'noBackupBtn').style.display = '';
+                    }
+                })
+                .catch(() => showStatus('Could not load device information', 'error'));
+        }
+        document.addEventListener('DOMContentLoaded', loadDeviceInfo);
+
+        // Reload once the device has restarted: the old firmware reports restartPending
+        // until it goes down, the restarted device reports false
+        function reloadWhenRestarted() {
+            setTimeout(function poll() {
+                fetch('/update/status', { cache: 'no-store' })
+                    .then(r => r.json())
+                    .then(s => { if (s.restartPending) setTimeout(poll, 2000); else window.location.reload(); })
+                    .catch(() => setTimeout(poll, 2000));
+            }, 2000);
+        }
+
         function updateTypeChanged() {
             const selectedEl = document.querySelector('input[name="updateType"]:checked');
             cotaUpdateType = (selectedEl && selectedEl.value) ? selectedEl.value : 'firmware';
@@ -668,13 +647,13 @@ String CustomOTA::generateOTAPage() {
             
             if (titleElement && descElement && buttonElement) {
                 if (cotaUpdateType === 'firmware') {
-                    titleElement.textContent = '📁 Select Firmware File';
+                    titleElement.textContent = 'Select Firmware File';
                     descElement.textContent = 'Click here to browse for your firmware .bin file';
-                    buttonElement.textContent = '🚀 Upload';
+                    buttonElement.textContent = 'Upload';
                 } else {
-                    titleElement.textContent = '📁 Select Filesystem File';
+                    titleElement.textContent = 'Select Filesystem File';
                     descElement.textContent = 'Click here to browse for your filesystem.bin file';
-                    buttonElement.textContent = '💾 Upload';
+                    buttonElement.textContent = 'Upload';
                 }
                 
                 // Reset file selection
@@ -728,10 +707,10 @@ String CustomOTA::generateOTAPage() {
 
 WARNING: This will REBOOT the device!
 
-• The device will restart automatically
-• Real-time operations will be interrupted
-• Ensure the device is not actively controlling critical systems
-• The update takes about 30-60 seconds total
+- The device will restart automatically
+- Real-time operations will be interrupted
+- Ensure the device is not actively controlling critical systems
+- The update takes about 30-60 seconds total
 
 Continue with firmware update?`;
             } else {
@@ -739,10 +718,10 @@ Continue with firmware update?`;
 
 This will NOT reboot the device!
 
-• Web interface files will be updated instantly
-• Device continues normal operation
-• No interruption to real-time functions
-• Just refresh your browser after update
+- Web interface files will be updated instantly
+- Device continues normal operation
+- No interruption to real-time functions
+- Just refresh your browser after update
 
 Continue with filesystem update?`;
             }
@@ -751,9 +730,10 @@ Continue with filesystem update?`;
                 return; // User cancelled
             }
             
+            // 'type' must precede the file: the server reads it when the first file chunk arrives
             const cotaFormData = new FormData();
-            cotaFormData.append('update', cotaSelectedFile);
             cotaFormData.append('type', cotaUpdateType);
+            cotaFormData.append('update', cotaSelectedFile);
             
             const cotaXhr = new XMLHttpRequest();
             
@@ -764,107 +744,40 @@ Continue with filesystem update?`;
                 }
             });
             
-            cotaXhr.onreadystatechange = function() {
-                if (cotaXhr.readyState === 4) {
-                    document.getElementById('progressContainer').style.display = 'none';
-                    
-                    // Check for success status codes (200, 201, 202)
-                    if (cotaXhr.status >= 200 && cotaXhr.status < 300) {
-                        const responseText = cotaXhr.responseText.toLowerCase();
-                        
-                        // Check if response indicates success
-                        if (responseText.includes('completed') || responseText.includes('success') || responseText.includes('rebooting')) {
-                            // ✅ Success handling - upload completed
-                            const cotaUpdateTypeName = cotaUpdateType.charAt(0).toUpperCase() + cotaUpdateType.slice(1);
-                            
-                            if (isFirmwareUpdate) {
-                                showStatus(cotaUpdateTypeName + ' uploaded successfully! Device is rebooting...', 'success');
-                                setTimeout(() => {
-                                    window.location.reload();
-                                }, 8000); // Longer timeout for reboot
-                            } else {
-                                showStatus(cotaUpdateTypeName + ' uploaded successfully! Web interface updated - refresh browser to see changes.', 'success');
-                                setTimeout(() => {
-                                    window.location.reload();
-                                }, 3000); // Shorter timeout for filesystem
-                            }
-                        } else if (responseText.includes('update started') && !responseText.includes('completed')) {
-                            // 🔄 Upload process started - this is expected (only if not completed)
-                            showStatus('Upload started successfully, transferring file...', 'info');
-                            // Don't reload page here - wait for completion
-                        } else {
-                            // Response doesn't indicate expected status
-                            showStatus('Unexpected response: ' + cotaXhr.responseText, 'error');
-                        }
+            // The device answers before it restarts, so the HTTP status is the real result
+            cotaXhr.onload = function() {
+                document.getElementById('progressContainer').style.display = 'none';
+                if (cotaXhr.status >= 200 && cotaXhr.status < 300) {
+                    showStatus(cotaXhr.responseText, 'success');
+                    if (isFirmwareUpdate) {
+                        reloadWhenRestarted();
                     } else {
-                        // HTTP error status
-                        let errorMsg = 'Upload failed';
-                        if (cotaXhr.status === 0) {
-                            // HTTP 0 is NORMAL for successful firmware uploads
-                            // Device reboots and connection drops - this is expected behavior
-                            if (isFirmwareUpdate) {
-                                showStatus('✅ Firmware uploaded successfully! Device is rebooting...', 'success');
-                                setTimeout(() => {
-                                    window.location.reload();
-                                }, 8000);
-                                return; // Don't show error for successful reboot
-                            } else {
-                                errorMsg += ' (Connection lost - check network)';
-                            }
-                        } else if (cotaXhr.status === 400) {
-                            errorMsg += ' (Bad Request)';
-                        } else if (cotaXhr.status === 500) {
-                            errorMsg += ' (Server Error)';
-                        } else {
-                            errorMsg += ' (HTTP ' + cotaXhr.status + ')';
-                        }
-                        
-                        // Only show error if we haven't already handled it as success
-                        if (cotaXhr.status !== 0 || !isFirmwareUpdate) {
-                            showStatus(errorMsg + ': ' + cotaXhr.responseText, 'error');
-                        }
+                        setTimeout(() => window.location.reload(), 3000);
                     }
+                } else {
+                    showStatus('Upload failed (HTTP ' + cotaXhr.status + '): ' + cotaXhr.responseText, 'error');
                 }
             };
-            
+
             document.getElementById('progressContainer').style.display = 'block';
             updateProgress(0);
             showStatus('Uploading ' + cotaUpdateType + '...', 'info');
-            
+
             cotaXhr.onerror = function() {
                 document.getElementById('progressContainer').style.display = 'none';
-                
-                // Check if this is likely a successful reboot (connection lost during device restart)
-                if (cotaUpdateType === 'firmware') {
-                    // For firmware updates, connection loss is expected and indicates success
-                    showStatus('✅ Firmware uploaded successfully! Device is rebooting...', 'success');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 8000);
-                } else {
-                    // For filesystem updates, network errors are actual failures
-                    showStatus('Upload failed: Network connection lost', 'error');
-                }
+                showStatus('Upload failed: network connection lost', 'error');
             };
-            
+
             cotaXhr.ontimeout = function() {
                 document.getElementById('progressContainer').style.display = 'none';
-                
-                // Timeout during firmware upload is usually a successful reboot
-                if (cotaUpdateType === 'firmware') {
-                    showStatus('✅ Firmware uploaded successfully! Device is rebooting...', 'success');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 8000);
-                } else {
-                    showStatus('Upload failed: Request timed out', 'error');
-                }
+                showStatus('Upload failed: request timed out', 'error');
             };
             
             // Set a reasonable timeout for the request
             cotaXhr.timeout = 120000; // 2 minutes for large firmware files
             
-            cotaXhr.open('POST', '/update', true); // Send to /update endpoint, not /update/start
+            // Also pass the type in the URL so it is available regardless of multipart field order
+            cotaXhr.open('POST', '/update?type=' + encodeURIComponent(cotaUpdateType), true);
             cotaXhr.send(cotaFormData);
         }
         
@@ -876,31 +789,13 @@ Continue with filesystem update?`;
                 fetch('/update/reboot', { method: 'POST' })
                     .then(response => {
                         if (response.ok) {
-                            // Success - device is rebooting
-                            showStatus('Reboot command sent successfully. Device is restarting...', 'success');
-                            // Give device time to reboot before trying to reload page
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 8000); // Increased timeout for reboot
+                            showStatus('Device is restarting...', 'success');
+                            reloadWhenRestarted();
                         } else {
-                            // HTTP error
                             showStatus('Reboot failed: HTTP ' + response.status, 'error');
                         }
                     })
-                    .catch(err => {
-                        // Network errors during reboot are expected and OK
-                        const errorMsg = err.message.toLowerCase();
-                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection') || errorMsg.includes('failed')) {
-                            // This is expected - device rebooted and cut off the connection
-                            showStatus('Reboot command sent. Device is restarting...', 'success');
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 8000);
-                        } else {
-                            // Unexpected error
-                            showStatus('Reboot failed: ' + err.message, 'error');
-                        }
-                    });
+                    .catch(err => showStatus('Reboot failed: ' + err.message, 'error'));
             }
         }
         
@@ -909,38 +804,15 @@ Continue with filesystem update?`;
                 showStatus('Initiating rollback...', 'info');
                 
                 fetch('/update/rollback', { method: 'POST' })
-                    .then(response => {
+                    .then(response => response.text().then(result => {
                         if (response.ok) {
-                            return response.text();
-                        } else {
-                            throw new Error('HTTP ' + response.status);
-                        }
-                    })
-                    .then(result => {
-                        const resultLower = result.toLowerCase();
-                        if (resultLower.includes('successful') || resultLower.includes('rollback')) {
                             showStatus(result, 'success');
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 6000); // Give time for deferred restart
+                            reloadWhenRestarted();
                         } else {
-                            showStatus('Rollback response: ' + result, 'info');
+                            showStatus(result, 'error');
                         }
-                    })
-                    .catch(err => {
-                        // Network errors during rollback are expected (device will reboot)
-                        const errorMsg = err.message.toLowerCase();
-                        if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('connection') || errorMsg.includes('failed')) {
-                            // This is expected - device is rebooting
-                            showStatus('Rollback initiated. Device is restarting...', 'success');
-                            setTimeout(() => {
-                                window.location.reload();
-                            }, 6000);
-                        } else {
-                            // Unexpected error
-                            showStatus('Rollback failed: ' + err.message, 'error');
-                        }
-                    });
+                    }))
+                    .catch(err => showStatus('Rollback failed: ' + err.message, 'error'));
             }
         }
         
@@ -949,58 +821,57 @@ Continue with filesystem update?`;
 </body>
 </html>
 )rawliteral";
-    
-    return html;
-}
 
-void CustomOTA::handleUpdateStart(AsyncWebServerRequest *request) {
+void CustomOTA::handleUpdateComplete(AsyncWebServerRequest *request) {
+    // AsyncWebServer calls this AFTER handleUpdateUpload() has processed the whole body
     if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
         return request->requestAuthentication();
     }
-    
-    // Always reset state before checking - this prevents race conditions
-    _updateInProgress = false;
-    _updateProgress = 0;
-    
-    // Clear any existing update state
-    if (Update.isRunning()) {
-        COTA_DEBUG_PRINTLN("CustomOTA: WARNING - Previous update still running, aborting it");
-        Update.abort();
-    }
-    
-    // Get update type from form data (default to firmware if not specified)
-    _updateType = 0; // 0 = firmware, 1 = filesystem
-    if (request->hasParam("type", true)) {
-        String type = request->getParam("type", true)->value();
-        if (type == "filesystem") {
-            _updateType = 1;
+
+    if (_uploadError) {
+        request->send(500, "text/plain", _updateStatus);
+    } else if (_uploadComplete) {
+        request->send(200, "text/plain", _updateStatus);
+    } else {
+        // No file part, or the body ended before the final chunk
+        if (Update.isRunning()) {
+            Update.abort();
         }
+        _updateInProgress = false;
+        _updateStatus = F("Update failed: no complete file received");
+        request->send(400, "text/plain", _updateStatus);
     }
-    
-    COTA_DEBUG_PRINTLN("==========================================");
-    COTA_DEBUG_PRINTF("CustomOTA: Starting %s update\n", _updateType == 0 ? "firmware" : "filesystem");
-    COTA_DEBUG_PRINTLN("CustomOTA: Preparing system for update...");
-    
-    // Set update state AFTER clearing any existing state
-    _updateInProgress = true;
-    _updateProgress = 0;
-    _updateStatus = "Starting " + String(_updateType == 0 ? "firmware" : "filesystem") + " update...";
-    
-    COTA_DEBUG_PRINTLN("CustomOTA: Update initialization complete");
-    COTA_DEBUG_PRINTLN("==========================================");
-    
-    // Don't send response here for multipart uploads - response will be sent by handleUpdateUpload() when complete
-    // request->send(200, "text/plain", "Update started");
+    _uploadError = false;
+    _uploadComplete = false;
 }
 
 void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-    // Check if this is the very first chunk (index = 0) and initialize if needed
-    if (index == 0 && !_updateInProgress) {
-        COTA_DEBUG_PRINTLN("CustomOTA: EMERGENCY INIT - First chunk received, initializing update state");
-        
+    if (index == 0) {
+        _uploadError = false;
+        _uploadComplete = false;
+        _updateInProgress = false;
+
+        // Authenticate before writing anything - the request handler only runs after the
+        // whole body (and therefore the whole update) has been processed
+        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+            COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Unauthenticated upload rejected");
+            return; // _updateInProgress stays false, so remaining chunks are ignored
+        }
+
+        if (_restartPending) {
+            _updateStatus = F("Device is restarting - try again once it is back");
+            _uploadError = true;
+            return;
+        }
+
+        if (Update.isRunning()) {
+            COTA_DEBUG_PRINTLN("CustomOTA: WARNING - Previous update still running, aborting it");
+            Update.abort();
+        }
+
         // Get update type from request parameters - try both POST params and URL params
         _updateType = 0; // Default to firmware
-        
+
         // Check POST parameters first (multipart form data)
         if (request->hasParam("type", true)) {
             const char* typeValue = request->getParam("type", true)->value().c_str();
@@ -1029,6 +900,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         // Initialize update state immediately
         _updateInProgress = true;
         _updateProgress = 0;
+        _lastReportedProgress = -1;
         
         // HEAP OPTIMIZATION: Use more efficient status string construction
         if (_updateType == 0) {
@@ -1037,7 +909,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             _updateStatus = F("Starting filesystem update...");
         }
         
-        COTA_DEBUG_PRINTF("CustomOTA: Emergency init complete - Type: %s\n", _updateType == 0 ? "firmware" : "filesystem");
+        COTA_DEBUG_PRINTF("CustomOTA: Update init complete - Type: %s\n", _updateType == 0 ? "firmware" : "filesystem");
     }
     
     // Now proceed with normal upload handling
@@ -1062,9 +934,9 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         if (freeHeap < minHeapRequired) {
             _updateStatus = F("Insufficient memory for update");
             _updateInProgress = false;
+            _uploadError = true;
             COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Insufficient heap for OTA update");
             COTA_DEBUG_PRINTLN("==========================================");
-            request->send(500, "text/plain", "Insufficient memory for update");
             return;
         }
         
@@ -1078,8 +950,9 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         COTA_DEBUG_PRINTF("CustomOTA: Starting update with command: %d\n", cotaUpdateCommand);
         
         if (!Update.begin(UPDATE_SIZE_UNKNOWN, cotaUpdateCommand)) {
-            _updateStatus = "Update begin failed";
+            _updateStatus = F("Update begin failed");
             _updateInProgress = false;
+            _uploadError = true;
             COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Update.begin() failed:");
             #if CUSTOM_OTA_DEBUG
             Update.printError(Serial);
@@ -1097,32 +970,32 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         if (cotaBytesWritten != len) {
             _updateStatus = F("Update write failed");
             _updateInProgress = false;
+            _uploadError = true;
             COTA_DEBUG_PRINTF("CustomOTA: ERROR - Write failed: attempted %d bytes, wrote %d bytes\n", len, cotaBytesWritten);
             #if CUSTOM_OTA_DEBUG
             Update.printError(Serial);
             #endif
+            Update.abort();
             return;
         }
-        
-        // Update progress - HEAP OPTIMIZATION: avoid String concatenation in loops
-        _updateProgress = (Update.progress() * 100) / Update.size();
-        
-        // HEAP OPTIMIZATION: Only update status string when progress changes significantly
-        static int lastStatusUpdate = -1;
-        if (_updateProgress != lastStatusUpdate && (_updateProgress % 5 == 0 || _updateProgress != lastStatusUpdate)) {
-            // Build status efficiently using fixed buffer
-            static char statusBuffer[64];
+
+        // Update progress against the request size - with UPDATE_SIZE_UNKNOWN, Update.size()
+        // is the whole partition, so progress would never reach 100%
+        size_t total = request->contentLength();
+        if (total > 0) {
+            _updateProgress = (int)min((size_t)100, (size_t)(((uint64_t)Update.progress() * 100) / total));
+        }
+
+        // HEAP OPTIMIZATION: Only update status string when progress changes
+        if (_updateProgress != _lastReportedProgress) {
+            char statusBuffer[64];
             const char* updateTypeName = _updateType == 0 ? "Firmware" : "Filesystem";
             snprintf(statusBuffer, sizeof(statusBuffer), "Uploading %s... %d%%", updateTypeName, _updateProgress);
             _updateStatus = String(statusBuffer);
-            lastStatusUpdate = _updateProgress;
-        }
-        
-        // Print progress every 10% - HEAP OPTIMIZATION: avoid repeated print calls
-        static int cotaLastProgress = -1;
-        if (_updateProgress >= cotaLastProgress + 10) {
-            COTA_DEBUG_PRINTF("CustomOTA: Upload progress: %d%% (%d bytes)\n", _updateProgress, Update.progress());
-            cotaLastProgress = (_updateProgress / 10) * 10;
+            if (_updateProgress / 10 != _lastReportedProgress / 10) {
+                COTA_DEBUG_PRINTF("CustomOTA: Upload progress: %d%% (%d bytes)\n", _updateProgress, Update.progress());
+            }
+            _lastReportedProgress = _updateProgress;
         }
     }
     
@@ -1142,13 +1015,13 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                 _updateStatus = F("Filesystem update completed successfully");
             }
             _updateInProgress = false;
-            
-            // Save update info
-            COTA_DEBUG_PRINTLN("CustomOTA: Saving update info...");
-            saveUpdateInfo();
-            
+
             // Handle different update types differently
             if (_updateType == 0) {
+                // Record the running firmware as the backup (only firmware updates create one)
+                COTA_DEBUG_PRINTLN("CustomOTA: Saving update info...");
+                saveUpdateInfo();
+
                 // Firmware update - requires reboot to switch partitions
                 COTA_DEBUG_PRINTLN("CustomOTA: Firmware update completed, setting boot partition...");
                 const esp_partition_t* cotaNextPartition = esp_ota_get_next_update_partition(nullptr);
@@ -1164,25 +1037,33 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                     COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Could not find next update partition");
                 }
                 
-                // Immediate reboot for firmware updates
-                request->send(200, "text/plain", "Firmware update completed. Rebooting now...");
-                COTA_DEBUG_PRINTLN("CustomOTA: Firmware update - rebooting immediately");
-                ESP.restart();
+                // Deferred restart: handleUpdateComplete() sends the response first, and
+                // handle() restarts once the delay has passed
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Firmware update completed. Rebooting in %lu seconds...", _restartDelay / 1000);
+                _updateStatus = msg;
+                _uploadComplete = true;
+                _restartPending = true;
+                _restartRequestedAt = millis();
+                COTA_DEBUG_PRINTF("CustomOTA: Firmware update - restarting in %lu ms\n", _restartDelay);
             } else {
                 // SPIFFS filesystem update - just remount, no reboot needed
                 COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS update completed, remounting filesystem...");
                 
-                // Remount SPIFFS to pick up new files
+                // Remount SPIFFS to pick up new files. Never format here - that would
+                // erase the image that was just written.
                 SPIFFS.end();
-                if (SPIFFS.begin(true)) {
+                if (SPIFFS.begin(false)) {
                     COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS remounted successfully - new files available");
                     _spiffsMounted = true;
-                    request->send(200, "text/plain", "Upload completed successfully. Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
+                    _updateStatus = F("Upload completed successfully. Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
                 } else {
                     COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS remount failed, may need manual reboot");
                     _spiffsMounted = false;
-                    request->send(200, "text/plain", "Upload completed successfully. Filesystem update completed but remount failed. Please reboot device manually if web interface issues occur.");
+                    _updateStatus = F("Upload completed successfully. Filesystem update completed but remount failed. Please reboot device manually if web interface issues occur.");
                 }
+                // Response is sent by handleUpdateComplete()
+                _uploadComplete = true;
                 
                 // No restart needed for SPIFFS updates
                 COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS update complete - no reboot required");
@@ -1191,34 +1072,27 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         } else {
             _updateStatus = F("Update failed");
             _updateInProgress = false;
+            _uploadError = true;
             COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Update.end() failed:");
             #if CUSTOM_OTA_DEBUG
             Update.printError(Serial);
             #endif
             COTA_DEBUG_PRINTLN("==========================================");
-            request->send(400, "text/plain", _updateStatus);
         }
     }
 }
 
 void CustomOTA::handleReboot(AsyncWebServerRequest *request) {
-    // REAL-TIME CRITICAL: Immediate reboot for reliability
-
     if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
         return request->requestAuthentication();
     }
 
-    // Simple reboot of current partition
-    COTA_DEBUG_PRINTLN("==========================================");
-    COTA_DEBUG_PRINTLN("CustomOTA: MANUAL REBOOT REQUEST RECEIVED");
-    COTA_DEBUG_PRINTLN("CustomOTA: Processing reboot command...");
-    COTA_DEBUG_PRINTLN("CustomOTA: Sending response to client");
+    // Deferred restart so the response actually reaches the browser - send() only
+    // queues it, and restarting here would drop it
+    COTA_DEBUG_PRINTLN("CustomOTA: Manual reboot requested, scheduling restart");
     request->send(200, "text/plain", "Rebooting device...");
-
-    // Immediate reboot for reliability
-    COTA_DEBUG_PRINTLN("CustomOTA: REBOOTING NOW!");
-    COTA_DEBUG_PRINTLN("==========================================");
-    ESP.restart();
+    _restartPending = true;
+    _restartRequestedAt = millis();
 }
 
 void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
@@ -1236,7 +1110,7 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
         COTA_DEBUG_PRINTLN("CustomOTA: Rollback successful, scheduling restart");
         // IMPORTANT: Non-blocking deferred restart - NO delay() calls!
         _restartPending = true;
-        _restartTime = millis() + _restartDelay;
+        _restartRequestedAt = millis();
     } else {
         String errorMsg = "Rollback failed. ";
         if (!_hasValidBackup) {
@@ -1251,11 +1125,15 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
 
 void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
     // HEAP OPTIMIZATION: Use efficient JSON building with minimal String operations
-    char jsonBuffer[512];
+    char jsonBuffer[768];
     size_t freeHeap = ESP.getFreeHeap();
     size_t totalHeap = ESP.getHeapSize();
     size_t heapPercent = (freeHeap * 100) / totalHeap;
-    
+
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* backup = running ? esp_ota_get_next_update_partition(running) : nullptr;
+    bool canRollback = !isSingleOtaPartition && hasOtaDataPartition();
+
     snprintf(jsonBuffer, sizeof(jsonBuffer),
         "{"
         "\"inProgress\":%s,"
@@ -1268,8 +1146,13 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         "\"heapCritical\":%s,"
         "\"spiffsMounted\":%s,"
         "\"hasSpiffsPartition\":%s,"
+        "\"hardwareID\":\"%s\","
         "\"version\":\"%s\","
-        "\"buildTimestamp\":\"%s\""
+        "\"buildTimestamp\":\"%s\","
+        "\"runningPartition\":\"%s\","
+        "\"backupPartition\":\"%s\","
+        "\"canRollback\":%s,"
+        "\"restartPending\":%s"
         "}",
         _updateInProgress ? "true" : "false",
         _updateProgress,
@@ -1281,8 +1164,13 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         (freeHeap < 32768) ? "true" : "false", // Critical if less than 32KB
         _spiffsMounted ? "true" : "false",
         _hasSpiffsPartition ? "true" : "false",
+        _hardwareID.c_str(),
         _firmwareVersion.c_str(),
-        _buildTimestamp.c_str()
+        _buildTimestamp.c_str(),
+        running ? running->label : "",
+        (backup && backup != running) ? backup->label : "",
+        canRollback ? "true" : "false",
+        _restartPending ? "true" : "false"
     );
     
     request->send(200, "application/json", jsonBuffer);
@@ -1338,14 +1226,10 @@ bool CustomOTA::restoreFromBackup() {
         }
     }
     
-    String backupVersion = _prefs.getString("backup_ver", "unknown");
-    String backupPartition = _prefs.getString("backup_part", "unknown");
-    
     COTA_DEBUG_PRINTLN("==========================================");
     COTA_DEBUG_PRINTLN("CustomOTA: ROLLBACK INITIATED");
-    COTA_DEBUG_PRINTF("CustomOTA: Rolling back to firmware version: %s\n", backupVersion.c_str());
-    COTA_DEBUG_PRINTF("CustomOTA: Backup partition: %s\n", backupPartition.c_str());
-    
+    COTA_DEBUG_PRINTF("CustomOTA: Rolling back to firmware version: %s\n", _prefs.getString("backup_ver", "unknown").c_str());
+
     // Get current running partition
     const esp_partition_t* cotaRunningPartition = esp_ota_get_running_partition();
     if (!cotaRunningPartition) {
@@ -1353,15 +1237,9 @@ bool CustomOTA::restoreFromBackup() {
         return false;
     }
 
-    // Find the backup partition dynamically (the other APP partition)
-    String backup_label = get_backup_partition_label(cotaRunningPartition->label);
-    if (backup_label.length() == 0) {
-        COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot find backup partition label");
-        return false;
-    }
-
-    const esp_partition_t* cotaBackupPartition = find_partition_by_label(backup_label.c_str());
-    if (!cotaBackupPartition) {
+    // The backup is the other OTA slot
+    const esp_partition_t* cotaBackupPartition = esp_ota_get_next_update_partition(cotaRunningPartition);
+    if (!cotaBackupPartition || cotaBackupPartition == cotaRunningPartition) {
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Cannot find backup partition");
         return false;
     }
@@ -1369,70 +1247,18 @@ bool CustomOTA::restoreFromBackup() {
     COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n",
                       cotaRunningPartition->label, cotaBackupPartition->label);
     
-    // Verify the backup partition contains valid firmware before setting boot
-    uint32_t first_word;
-    esp_err_t err = esp_partition_read(cotaBackupPartition, 0, &first_word, sizeof(first_word));
-    if (err != ESP_OK || first_word == 0xFFFFFFFF) {
+    // Quick check for the ESP32 image magic byte before the full verification below
+    uint8_t magic = 0xFF;
+    esp_err_t err = esp_partition_read(cotaBackupPartition, 0, &magic, sizeof(magic));
+    if (err != ESP_OK || magic != 0xE9) {
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Backup partition does not contain valid firmware");
         return false;
     }
-    
-    // Enhanced validation: Check multiple sectors for firmware integrity
-    COTA_DEBUG_PRINTLN("CustomOTA: Performing sector-by-sector validation of backup firmware...");
-    bool validationPassed = true;
-    const size_t sectorSize = 4096; // ESP32 flash sector size
-    const size_t sectorsToCheck = 8; // Check first 32KB (8 sectors) for validity
-    
-    for (size_t sector = 0; sector < sectorsToCheck && validationPassed; sector++) {
-        uint32_t sectorData[1024]; // 4096 bytes / 4 bytes per uint32_t
-        size_t offset = sector * sectorSize;
-        
-        // Don't read beyond partition size
-        if (offset >= cotaBackupPartition->size) {
-            break;
-        }
-        
-        esp_err_t sectorErr = esp_partition_read(cotaBackupPartition, offset, sectorData, sizeof(sectorData));
-        if (sectorErr != ESP_OK) {
-            COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to read sector %d: %s\n", sector, esp_err_to_name(sectorErr));
-            validationPassed = false;
-            break;
-        }
-        
-        // Check if sector is all 0xFF (empty)
-        bool sectorEmpty = true;
-        for (size_t i = 0; i < 1024 && sectorEmpty; i++) {
-            if (sectorData[i] != 0xFFFFFFFF) {
-                sectorEmpty = false;
-            }
-        }
-        
-        if (sectorEmpty) {
-            COTA_DEBUG_PRINTF("CustomOTA: WARNING - Sector %d is empty (all 0xFF)\n", sector);
-            // Empty sectors are OK as long as we have some valid data
-        } else {
-            // For non-empty sectors, do basic sanity checks
-            // Check for ESP32 image magic bytes in first sector
-            if (sector == 0) {
-                uint8_t* byteData = (uint8_t*)sectorData;
-                // ESP32 image starts with 0xE9 magic byte
-                if (byteData[0] != 0xE9) {
-                    COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Invalid ESP32 image magic byte in backup");
-                    validationPassed = false;
-                }
-            }
-        }
-    }
-    
-    if (!validationPassed) {
-        COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Backup firmware validation failed");
-        return false;
-    }
-    
-    COTA_DEBUG_PRINTLN("CustomOTA: Backup firmware validation passed");
+
     COTA_DEBUG_PRINTF("CustomOTA: Rollback partition: %s\n", cotaBackupPartition->label);
-    
-    // Set the backup partition as the boot partition
+
+    // Set the backup partition as the boot partition. esp_ota_set_boot_partition() verifies
+    // the complete image (segments and checksum/hash) and refuses an invalid one.
     esp_err_t cotaRollbackErr = esp_ota_set_boot_partition(cotaBackupPartition);
     if (cotaRollbackErr != ESP_OK) {
         COTA_DEBUG_PRINTF("CustomOTA: ERROR - Failed to set boot partition: %s\n", esp_err_to_name(cotaRollbackErr));
@@ -1543,15 +1369,9 @@ bool CustomOTA::autoDetectBackup() {
         return false;
     }
     
-    // Find the other partition dynamically
-    String backup_label = get_backup_partition_label(running->label);
-    if (backup_label.length() == 0) {
-        COTA_DEBUG_PRINTLN("CustomOTA: Auto-detect failed - cannot find other partition");
-        return false;
-    }
-
-    const esp_partition_t* other = find_partition_by_label(backup_label.c_str());
-    if (!other) {
+    // The backup is the other OTA slot
+    const esp_partition_t* other = esp_ota_get_next_update_partition(running);
+    if (!other || other == running) {
         COTA_DEBUG_PRINTLN("CustomOTA: Auto-detect failed - cannot find other partition");
         return false;
     }
@@ -1587,11 +1407,9 @@ void CustomOTA::checkRestart() {
     // This function is called from main loop and must return immediately
     // Uses non-blocking millis() comparison for timing
     
-    if (_restartPending && millis() >= _restartTime) {
+    if (shouldRestart()) {
         COTA_DEBUG_PRINTLN("==========================================");
-        COTA_DEBUG_PRINTLN("CustomOTA: FIRMWARE UPDATE COMPLETE");
         COTA_DEBUG_PRINTLN("CustomOTA: Performing deferred restart...");
-        COTA_DEBUG_PRINTLN("CustomOTA: Device will reboot to new partition");
         COTA_DEBUG_PRINTLN("==========================================");
         COTA_DEBUG_PRINTLN("CustomOTA: Flushing serial before restart...");
         #if CUSTOM_OTA_DEBUG

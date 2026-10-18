@@ -1,6 +1,6 @@
 {
     "name": "CustomOTA",
-    "version": "1.2.4",
+    "version": "1.3.0",
     "description": "Real-time compatible ESP32 OTA library with automatic backup detection, boot partition validation, dual partition support, filesystem updates, heap monitoring, enhanced rollback validation, and configurable restart delays",
     "keywords": [
         "ota",
@@ -48,11 +48,13 @@
     "frameworks": ["arduino", "espidf"],
     "platforms": ["espressif32"],
     "build": {
-        "includeDir": "src"
+        "includeDir": "src",
+        "extraScript": "build_timestamp.py"
     },
     "export": {
         "include": [
             "src/*",
+            "build_timestamp.py",
             "examples/*",
             "partitions/*",
             "*.md",

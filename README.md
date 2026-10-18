@@ -1,57 +1,19 @@
-# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.2.4-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.3.0-blue.svg)
 
-## 🚀 What's New in v1.2.4
-
-### 🐞 Bug Fixes
-- Serial upload boot partition inconsistency fixed
-- OTA boot state correction and partition validation
-- Partition state validation and error recovery
-
-### ✨ Enhanced Features
-- Boot partition management and startup validation
-- Improved compatibility for mixed OTA/serial workflows
-
-### 🐛 Critical Bug Fixes
-- **Fixed Upload Progress Issue** - Progress bar now works correctly (0% → 100%) instead of staying at 0%
-- **Fixed Unexpected Reboot Dialogs** - Reboot confirmation no longer appears during firmware uploads
-- **Fixed Routing Mismatch** - Added missing POST route for `/update` endpoint to handle multipart uploads
-- **Improved Upload Reliability** - Enhanced error handling for network disconnections during device reboot
-
-### ✨ Enhanced Features
-- **🛡️ Safer SPIFFS Handling** - Configurable formatting behavior to prevent data loss
-- **⚡ Heap Monitoring** - Automatic memory checks before updates
-- **🔍 Enhanced Rollback Validation** - Sector-by-sector firmware integrity checks
-- **⏱️ Configurable Restart Delays** - Customizable reboot timing for different applications
-- **🔧 Advanced Configuration Options** - Fine-tune library behavior for your needsary
-
-ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and modern web interface.
-
+ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and a web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-## 🚀 What's New in v1.2.3
+## What's New in v1.3.0
 
-### 🐞 Bug Fixes
-- NVS error handling and robust first-run behavior
-- Clean debug output and improved reliability
+- **Security fixes** - Uploads are authenticated before anything is written, and `setCredentials()` followed by `begin(&server)` no longer turns authentication off.
+- **Lower heap use** - The OTA page is served straight from flash instead of being built as a ~23 KB `String` on every request.
+- **Real results in the browser** - Firmware update, reboot and rollback reply first, then restart after `setRestartDelay()`. The page shows actual success or failure and reloads once the device is back.
+- **Many upload fixes** - Filesystem uploads, error responses, progress reaching 100%, `/update/status` routing and more.
+- **Build date updates on every build**, and the hardware ID is shown on the page.
 
-### ✨ Enhanced Features
-- NVS operations and error handling
-
-### ✨ Enhanced Features
-- **🛡️ Safer SPIFFS Handling** - Configurable formatting behavior to prevent data loss
-- **⚡ Heap Monitoring** - Automatic memory checks before updates
-- **🔍 Enhanced Rollback Validation** - Sector-by-sector firmware integrity checks
-- **⏱️ Configurable Restart Delays** - Customizable reboot timing for different applications
-- **🔧 Advanced Configuration Options** - Fine-tune library behavior for your needs
-
-### 🐛 Bug Fixes
-- **Fixed Upload Progress Issue** - Progress bar now displays correctly from 0% to 100%
-- **Fixed Unexpected Reboot Dialogs** - Reboot confirmation removed from upload process
-- **Fixed Routing Mismatch** - Added POST route for `/update` endpoint
-- **Improved SPIFFS Mount Logic** - More conservative formatting to preserve user data
-- **Better Error Handling** - Enhanced recovery mechanisms and real-time compatibility
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ## Installation Methods
 
@@ -79,7 +41,7 @@ your_project/
 └── platformio.ini
 ```
 
-### ⚠️ CRITICAL: Partition Configuration Required
+### CRITICAL: Partition Configuration Required
 
 **CustomOTA requires dual OTA partitions to function.** You must configure your ESP32 with the correct partition table. See changelog for new partition validation features.
 
@@ -154,7 +116,7 @@ ota.setRestartDelay(5000); // 5 seconds
 ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 ```
 
-## API Reference (v1.2.4)
+## API Reference
 
 ### Core Methods
 - `begin(AsyncWebServer* server)` - Initialize OTA system
@@ -162,12 +124,12 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 - `handle()` - **Must call every loop** for real-time compatibility
 - `setCredentials(username, password)` - Enable authentication
 - `setFirmwareVersion(version)` - Set version display
-- `setHardwareID(id)` - Set hardware identifier
+- `setHardwareID(id)` - Set the device name shown as the OTA page heading and browser tab title
 
 ### Advanced Configuration Methods
-- `setRestartDelay(unsigned long delayMs)` - Set restart delay after firmware update (default: 3000ms)
+- `setRestartDelay(unsigned long delayMs)` - Delay between replying to the browser and restarting, after a firmware update, reboot or rollback (default: 3000ms)
 - `setSpiffsFormatOnFailure(bool allowFormat)` - Control automatic SPIFFS formatting on mount failure (default: true)
-- `setBuildTimestamp(const char* timestamp)` - Set custom build timestamp
+- `setBuildTimestamp(const char* timestamp)` - Override the build timestamp (by default PlatformIO builds set it automatically via `build_timestamp.py`)
 
 ### Status Methods
 - `isUpdateInProgress()` - Check if update is in progress
@@ -182,94 +144,48 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 - `CustomOTA::getVersionPatch()` - Get patch version number
 - `CustomOTA::getBuildInfo()` - Get build date and time
 
-## Features (v1.2.4)
+## Features
 
-### ✅ Core Features
+### Core Features
 - **Dual Partition Backup** - Automatic firmware rollback capability
 - **Filesystem Updates** - Update SPIFFS content via web interface
 - **Real-Time Compatible** - Non-blocking operations, no `delay()` calls
-- **Modern Web Interface** - Drag & drop uploads with progress tracking
+- **Web Interface** - File uploads with progress tracking, served from flash
 - **HTTP Authentication** - Password protection for OTA operations
 - **Debug Control** - Enable with `-DCUSTOM_OTA_DEBUG=1` build flag
 
-### ✅ Advanced Features
+### Advanced Features
 - **Automatic Backup Detection** - Finds existing firmware in inactive partitions
 - **Heap Monitoring** - Prevents updates when memory is insufficient
-- **Enhanced Rollback Validation** - Sector-by-sector firmware integrity checks
+- **Rollback Validation** - The backup image is verified by ESP-IDF before it is made the boot partition
 - **Configurable Restart Delays** - Custom reboot timing for different applications
 - **Safer SPIFFS Handling** - Prevents accidental data loss during formatting
 - **Progress Tracking** - Real-time upload and update progress
 - **Status Monitoring** - Comprehensive system status information
-- **Smart Error Handling** - Distinguishes between real failures and expected connection drops during reboots
+- **Clear Results** - The device replies before restarting, so the page always shows the real outcome
 
-## CSS Customization
+## Web Endpoints
 
-The web interface styling is embedded in `src/CustomOTA.cpp`. To customize:
+| Route | Method | Purpose |
+|---|---|---|
+| `/update` | GET | OTA web page |
+| `/update` | POST | Upload firmware or filesystem image (multipart, `type=firmware` or `filesystem`) |
+| `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending` |
+| `/update/reboot` | POST | Restart the device |
+| `/update/rollback` | POST | Boot the previous firmware |
 
-1. **Open** `src/CustomOTA.cpp`
-2. **Find** the CSS section in the `generateOTAPage()` function (around line 200)
-3. **Modify** colors, fonts, and layout:
+## Customizing the Page
 
-```cpp
-// Example customizations in the CSS section:
-.header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); // Your colors
-}
+The page is the `COTA_OTA_PAGE` constant in `src/CustomOTA.cpp`, with its CSS in the `<style>` block near the top. Edit it there and rebuild. It also loads `/styles.css` from your own web server if you provide one, so you can restyle it without changing the library.
 
-.card {
-    border-radius: 15px;     // More rounded corners
-    box-shadow: 0 8px 32px rgba(0,0,0,0.1); // Different shadow
-}
-
-.upload-area {
-    border: 3px dashed #your-color; // Change upload area border
-}
-
-// Add your custom CSS here
-.my-custom-style {
-    // Your custom styling
-}
-```
-
-4. **Rebuild and upload** your firmware to see changes
-
-### Common Customizations
-
-**Change Color Scheme:**
-```cpp
-:root {
-    --primary-color: #your-primary-color;
-    --secondary-color: #your-secondary-color;
-    --accent-color: #your-accent-color;
-}
-```
-
-**Add Logo:**
-```cpp
-.logo {
-    background-image: url('data:image/svg+xml;base64,YOUR_BASE64_LOGO');
-    background-size: contain;
-    background-repeat: no-repeat;
-    height: 40px;
-    width: 120px;
-}
-```
-
-**Custom Buttons:**
-```cpp
-.btn-primary {
-    background: linear-gradient(45deg, #your-color1, #your-color2);
-    border: none;
-    border-radius: 25px;
-}
-```
+Device-specific values are not in the HTML: the page's script fills them in from `/update/status`.
 
 ## File Structure
 ```
 CustomOTA-ESP32/
 ├── src/
 │   ├── CustomOTA.h          # Header file
-│   └── CustomOTA.cpp        # Implementation (contains CSS)
+│   └── CustomOTA.cpp        # Implementation (contains the web page)
 ├── partitions/
 │   ├── default.csv          # 4MB partition table
 │   ├── default_8MB.csv      # 8MB partition table
@@ -278,36 +194,19 @@ CustomOTA-ESP32/
 │   ├── BasicOTA/
 │   ├── AdvancedOTA/
 │   └── SecureOTA/
+├── build_timestamp.py       # Sets the build date on every PlatformIO build
 ├── library.json             # PlatformIO metadata
 ├── library.properties       # Arduino IDE metadata
 └── README.md
 ```
 
-## Troubleshooting (v1.2.4)
+## Troubleshooting
 
 ### Common Issues & Solutions
 
-**"Progress Bar Stuck at 0%"**
-- **✅ FIXED in v1.2.2** - This was caused by a routing mismatch
-- **Solution**: Update to v1.2.2 or later for proper progress tracking
-- **Old behavior**: Progress stayed at 0% due to missing POST route
-- **New behavior**: Progress correctly shows 0% → 100% during upload
-
-**"Unexpected Reboot Confirmation Dialog"**
-- **✅ FIXED in v1.2.2** - Reboot confirmation was misplaced in upload function
-- **Solution**: Update to v1.2.2 or later for clean upload experience
-- **Old behavior**: Reboot dialog appeared during every firmware upload
-- **New behavior**: Reboot confirmation only appears when manually rebooting
-
-**"Upload Failed (HTTP 0)"**
-- **Cause**: Connection aborted during device reboot (normal for firmware updates)
-- **Solution**: This is usually a **successful upload**! The device reboots immediately after firmware installation, cutting off the connection
-- **Expected behavior**: 
-  - Progress bar reaches 100%
-  - Connection drops with HTTP 0 error
-  - Device reboots to new firmware
-  - Web interface becomes available again after ~10-15 seconds
-- **If upload truly failed**: Check device logs, file validity, and network stability
+**"Upload failed: network connection lost" / timed out**
+- The connection dropped before the device replied. The device replies before it restarts, so this is a real failure, not a reboot
+- Check WiFi signal and retry; the status at `/update/status` shows what the device saw
 
 **"Upload Failed (HTTP 400/500)"**
 - Check .bin file validity and ESP32 compatibility
@@ -315,7 +214,7 @@ CustomOTA-ESP32/
 - Verify correct partition table configuration
 
 **"No OTA Partitions Found"**
-- ⚠️ **You need dual OTA partitions!** See partition configuration above
+- **You need dual OTA partitions!** See partition configuration above
 - Check your partition table has both `app0` and `app1` partitions
 
 **"No Backup Available"**
@@ -355,28 +254,7 @@ This provides extensive debug information including:
 - Rollback validation details
 - Network and authentication status
 
-## Migration Guide (v1.2.4)
-
-### From PrettyOTA
-Replace:
-```cpp
-// Old PrettyOTA code
-#include <PrettyOTA.h>
-PrettyOTA OTAUpdates;
-OTAUpdates.Begin(&server);
-OTAUpdates.SetHardwareID("Hardware");
-OTAUpdates.SetAppVersion("1.0.0");
-```
-
-With:
-```cpp
-// New CustomOTA code
-#include "CustomOTA.h"
-CustomOTA otaUpdater;
-otaUpdater.begin(&server, "admin", "password");
-otaUpdater.setHardwareID("Hardware");
-otaUpdater.setFirmwareVersion("1.0.0");
-```
+## Migration Guide
 
 ### From ArduinoOTA
 Replace:

@@ -5,52 +5,60 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-18
+
+### Security
+- **Upload authentication** - Uploads are now authenticated on the first chunk, before anything is written. Previously a successful firmware upload rebooted before the password check ran, so anyone on the network could flash firmware.
+- **`setCredentials()` + `begin(server)`** - `begin(server)` no longer clears credentials set earlier, which had silently turned authentication off (the order used in the README and the Advanced/Secure examples).
+
+### Fixed
+- **`GET /update/status` returned the OTA page** - The specific `/update/*` routes are now registered before `/update`.
+- **Filesystem uploads written to the firmware partition** - The page sent the `type` field after the file; it is now sent first and also in the URL.
+- **Failed uploads got no response** - Low memory, `Update.begin` and write failures left the browser waiting for its 2-minute timeout; every upload now gets a success or error response.
+- **Status stuck on "in progress"** after a filesystem update.
+- **SPIFFS remount formatted the new image** - The remount after a filesystem update no longer formats on failure.
+- **Debug output could not be enabled** - `-DCUSTOM_OTA_DEBUG=1` was overridden by a `#define` in the .cpp.
+- **Filesystem updates overwrote the rollback record.**
+- **Progress never reached 100%** - Progress is measured against the upload size, and resets between uploads.
+- **Restart timer and `millis()` wrap** - Uses the wrap-safe form.
+- **Rollback target** - Uses the OTA slot logic, so a factory partition is never chosen.
+- **Build date did not change** - It came from when the library was last compiled. `build_timestamp.py` now sets it on every PlatformIO build.
+
+### Changed
+- **Deferred restart** - Firmware update, reboot and rollback now send their response first and restart after `setRestartDelay()` (default 3 s) from `handle()`. The page shows the real result instead of treating any dropped connection as success, and reloads once the device is back.
+- **Heap** - The OTA page is a constant in flash, streamed without a heap copy (it was a ~23 KB `String` built per request). Device details are loaded from `/update/status`.
+- **Rollback check** - Replaced the 4 KB stack-buffer sector check with a magic-byte check; `esp_ota_set_boot_partition()` verifies the full image.
+- **Page** - Shows the hardware ID as the heading and tab title. Emoji icons removed.
+- **`/update/status`** - Added `hardwareID`, `runningPartition`, `backupPartition`, `canRollback` and `restartPending`.
+- **Uploads are refused while a restart is pending.**
+
 ## [1.2.4] - 2025-08-29
 
 ### Fixed
 - **Serial Upload Boot Partition Inconsistency** - Fixed device booting to wrong partition after serial upload
 - **OTA Boot State Correction** - Added automatic detection and correction of stale boot partition settings
 - **Partition State Validation** - Enhanced startup validation to detect and fix partition mismatches
-- **Serial Upload Workflow** - Improved compatibility between OTA updates and serial uploads
 
 ### Changed
 - **Boot Partition Management** - Enhanced boot partition handling for mixed OTA/serial workflows
-- **Startup Validation** - Added comprehensive partition state checking on library initialization
-- **Error Recovery** - Improved automatic recovery from inconsistent partition states
-
-### Technical Details
-- Added boot partition mismatch detection in `begin()` method
-- Implemented automatic correction of stale OTA boot partition settings
-- Enhanced partition validation to prevent booting to wrong partition after serial upload
-- Maintained real-time compatibility and non-blocking operations
-
-## [1.2.4] - 2025-09-11
-
-### Fixed
-- Serial upload boot partition inconsistency
-- OTA boot state correction and partition validation
-- Partition state validation and error recovery
-
-### Changed
-- Boot partition management and startup validation
-- Improved compatibility for mixed OTA/serial workflows
+- **Startup Validation** - Added partition state checking on library initialization
 
 ### Technical Details
 - Added boot partition mismatch detection in `begin()`
+- Stale OTA boot partition settings are corrected to match the running partition
+
+## [1.2.3] - 2025-08-29
+
+### Fixed
 - **Robust First-Run Behavior** - Improved handling of missing NVS keys on initial device startup
-- **Error Prevention** - Added `isKey()` checks before all NVS `getBytesLength()` operations
 - **Clean Debug Output** - Eliminated spurious NVS error messages from serial output
 
 ### Changed
-- **NVS Operations** - Enhanced robustness of Preferences operations with existence validation
-- **Error Handling** - More graceful handling of missing backup metadata
-- **Library Stability** - Improved reliability for devices with cleared or corrupted NVS
+- **NVS Operations** - Preferences operations check that a key exists first
+- **Error Handling** - More graceful handling of missing or corrupted backup metadata
 
 ### Technical Details
 - Replaced direct `getBytesLength()` calls with `isKey()` existence checks
-- Added proper error handling for missing backup metadata
-- Maintained real-time compatibility and non-blocking operations
-- Enhanced library robustness for production deployments
 
 ## [1.2.2] - 2025-08-29
 
@@ -139,19 +147,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Better error handling and fallback mechanisms
 - Maintains real-time operation compatibility throughout
 
-## [1.1.0] - 2024
-
-### Added
-- **Filesystem Update Support** - Added SPIFFS filesystem update capability
-- **Enhanced Partition Display** - Comprehensive partition table analysis and display
-- **Update Type Selection** - Web interface now supports both firmware and filesystem updates
-- **SPIFFS Partition Detection** - Automatic detection of SPIFFS partition availability
-
-### Changed
-- **Web Interface** - Enhanced OTA page with update type selection
-- **Update Process** - Differentiated handling for firmware vs filesystem updates
-- **Error Handling** - Improved error reporting and debug output
-
 ## [1.0.0] - 2025-07-31
 
 ### Added
@@ -164,6 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HTTP Authentication** - Optional username/password protection
 - **Build Timestamp Display** - Shows compile date/time in web interface
 - **Comprehensive Documentation** - Complete setup guide with partition requirements
+- **Filesystem Updates** - SPIFFS filesystem updates, selectable on the web page, with automatic SPIFFS partition detection
+- **Partition Display** - Running and backup partition shown on the web page
 
 ### Features
 - Dual OTA partition backup system

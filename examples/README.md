@@ -184,18 +184,3 @@ CustomOTA ota;
 ota.begin(&server);
 ota.handle();
 ```
-
-### From PrettyOTA
-Replace:
-```cpp
-#include <PrettyOTA.h>
-PrettyOTA OTAUpdates;
-OTAUpdates.Begin(&server);
-```
-
-With:
-```cpp
-#include <CustomOTA.h>
-CustomOTA ota;
-ota.begin(&server, "username", "password");
-```

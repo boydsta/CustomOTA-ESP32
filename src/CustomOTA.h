@@ -1,10 +1,10 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.2.4
- * 
+ * Version: 1.3.0
+ *
  * Author: Boyd Benton
  * Created: 2025
- * Last Updated: August 2025
+ * Last Updated: October 2026
  * 
  * Features:
  * - Dual firmware/filesystem OTA updates
@@ -21,6 +21,16 @@
  * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.3.0 (October 2026):
+ *   - Security: uploads are authenticated before anything is written, and
+ *     setCredentials() followed by begin(server) no longer disables authentication
+ *   - OTA page is served from flash (no heap copy); device details come from /update/status
+ *   - Firmware update, reboot and rollback reply first, then restart after setRestartDelay()
+ *   - Fixed /update/status routing, filesystem uploads going to the firmware partition,
+ *     missing error responses, progress never reaching 100%, SPIFFS remount formatting
+ *     the new image, rollback target selection and the CUSTOM_OTA_DEBUG flag
+ *   - Build date is set on every PlatformIO build; hardware ID is shown on the page
+ *
  * v1.2.4 (August 2025):
  *   - Fixed serial upload boot partition inconsistency
  *   - Added automatic boot partition correction after serial uploads
@@ -88,9 +98,9 @@
 
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
-#define CUSTOMOTA_VERSION_MINOR 2
-#define CUSTOMOTA_VERSION_PATCH 4
-#define CUSTOMOTA_VERSION_STRING "1.2.4"
+#define CUSTOMOTA_VERSION_MINOR 3
+#define CUSTOMOTA_VERSION_PATCH 0
+#define CUSTOMOTA_VERSION_STRING "1.3.0"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 
@@ -141,9 +151,14 @@ private:
     bool _updateInProgress;
     int _updateType; // 0 = firmware, 1 = filesystem
     
+    // Upload result, reported by handleUpdateComplete() once the body has been received
+    bool _uploadError;
+    bool _uploadComplete;
+    int _lastReportedProgress;
+
     // Restart management for real-time systems
     bool _restartPending;
-    unsigned long _restartTime;
+    unsigned long _restartRequestedAt; // millis() when the restart was scheduled
     unsigned long _restartDelay; // Configurable restart delay in milliseconds
     bool _allowSpiffsFormat; // Control SPIFFS formatting on mount failure
     
@@ -151,12 +166,8 @@ private:
     bool _spiffsMounted;
     bool _hasSpiffsPartition;
     
-    // Generate HTML page
-    String generateOTAPage();
-    String generateStatusPage();
-    
     // Handle update process
-    void handleUpdateStart(AsyncWebServerRequest *request);
+    void handleUpdateComplete(AsyncWebServerRequest *request);
     void handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
     void handleReboot(AsyncWebServerRequest *request);
     void handleRollback(AsyncWebServerRequest *request);
@@ -210,7 +221,7 @@ public:
     bool isUpdateInProgress() { return _updateInProgress; }
     String getUpdateStatus() { return _updateStatus; }
     int getUpdateProgress() { return _updateProgress; }
-    bool shouldRestart() { return _restartPending && (millis() >= _restartTime); }
+    bool shouldRestart() { return _restartPending && (millis() - _restartRequestedAt >= _restartDelay); }
     
     // HEAP OPTIMIZATION: Memory monitoring functions
     size_t getFreeHeap() { return ESP.getFreeHeap(); }
