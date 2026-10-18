@@ -110,6 +110,13 @@
 #define CUSTOMOTA_SUPPORT_DUAL_PARTITION 1
 #define CUSTOMOTA_SUPPORT_REALTIME_OPERATIONS 1
 
+// Partition editor - off by default so projects that do not use it pay nothing for it.
+// Enable with -D CUSTOM_OTA_PARTITIONS=1 in platformio.ini build_flags.
+#ifndef CUSTOM_OTA_PARTITIONS
+#define CUSTOM_OTA_PARTITIONS 0
+#endif
+#define CUSTOMOTA_SUPPORT_PARTITION_EDITOR CUSTOM_OTA_PARTITIONS
+
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -209,6 +216,7 @@ public:
     static bool supportsAutoBackupDetection() { return CUSTOMOTA_SUPPORT_AUTO_BACKUP_DETECTION; }
     static bool supportsDualPartition() { return CUSTOMOTA_SUPPORT_DUAL_PARTITION; }
     static bool supportsRealtimeOperations() { return CUSTOMOTA_SUPPORT_REALTIME_OPERATIONS; }
+    static bool supportsPartitionEditor() { return CUSTOMOTA_SUPPORT_PARTITION_EDITOR; }
     
     // Call this after setFirmwareVersion to refresh backup status
     void refreshBackupStatus();
