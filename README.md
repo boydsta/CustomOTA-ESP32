@@ -254,26 +254,6 @@ This provides extensive debug information including:
 - Rollback validation details
 - Network and authentication status
 
-## Migration Guide
-
-### From ArduinoOTA
-Replace:
-```cpp
-// Old ArduinoOTA code
-#include <ArduinoOTA.h>
-ArduinoOTA.begin();
-ArduinoOTA.handle();
-```
-
-With:
-```cpp
-// New CustomOTA code
-#include "CustomOTA.h"
-CustomOTA otaUpdater;
-otaUpdater.begin(&server);
-otaUpdater.handle(); // Call in loop()
-```
-
 ## Performance Considerations
 
 ### Real-Time Applications
@@ -290,23 +270,6 @@ otaUpdater.handle(); // Call in loop()
 - **Stable WiFi connection** required during updates
 - **Minimum bandwidth**: 1Mbps recommended
 - **Timeout handling**: Automatic recovery from network issues
-
-## Security Best Practices
-
-### Authentication
-- **Always use authentication** in production
-- **Use strong passwords** (12+ characters recommended)
-- **Change default credentials** immediately
-
-### Network Security
-- **Use WPA2/3 WiFi encryption**
-- **Consider VPN** for remote access
-- **Firewall rules** to restrict access
-
-### Firmware Security
-- **Validate firmware signatures** (future feature)
-- **Use HTTPS** for secure updates (future feature)
-- **Backup validation** prevents rollback to compromised firmware
 
 ## License
 MIT License - Free for commercial and personal use.
