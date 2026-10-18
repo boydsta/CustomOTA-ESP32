@@ -600,6 +600,8 @@ const char COTA_OTA_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         </button>
     </div>
 
+    <p id="libVersion" style="font-size: 12px; color: #888;"></p>
+
     <script>
         let cotaSelectedFile = null;
         let cotaUpdateType = 'firmware';
@@ -613,6 +615,7 @@ const char COTA_OTA_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
                         document.getElementById('deviceName').textContent = s.hardwareID;
                         document.title = s.hardwareID + ' - OTA Update';
                     }
+                    document.getElementById('libVersion').textContent = 'CustomOTA v' + s.libraryVersion;
                     document.getElementById('fwVersion').textContent = s.version || 'Unknown';
                     document.getElementById('fwBuild').textContent = s.buildTimestamp || 'Unknown';
                     document.getElementById('fwRunning').textContent = s.runningPartition || 'UNKNOWN';
@@ -1152,7 +1155,8 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         "\"runningPartition\":\"%s\","
         "\"backupPartition\":\"%s\","
         "\"canRollback\":%s,"
-        "\"restartPending\":%s"
+        "\"restartPending\":%s,"
+        "\"libraryVersion\":\"" CUSTOMOTA_VERSION_STRING "\""
         "}",
         _updateInProgress ? "true" : "false",
         _updateProgress,

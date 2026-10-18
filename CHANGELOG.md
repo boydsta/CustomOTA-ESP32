@@ -28,8 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deferred restart** - Firmware update, reboot and rollback now send their response first and restart after `setRestartDelay()` (default 3 s) from `handle()`. The page shows the real result instead of treating any dropped connection as success, and reloads once the device is back.
 - **Heap** - The OTA page is a constant in flash, streamed without a heap copy (it was a ~23 KB `String` built per request). Device details are loaded from `/update/status`.
 - **Rollback check** - Replaced the 4 KB stack-buffer sector check with a magic-byte check; `esp_ota_set_boot_partition()` verifies the full image.
-- **Page** - Shows the hardware ID as the heading and tab title. Emoji icons removed.
-- **`/update/status`** - Added `hardwareID`, `runningPartition`, `backupPartition`, `canRollback` and `restartPending`.
+- **Page** - Shows the hardware ID as the heading and tab title, and the CustomOTA version in the footer. Emoji icons removed.
+- **`/update/status`** - Added `hardwareID`, `runningPartition`, `backupPartition`, `canRollback`, `restartPending` and `libraryVersion`.
 - **Uploads are refused while a restart is pending.**
 
 ## [1.2.4] - 2025-08-29

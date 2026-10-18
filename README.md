@@ -170,7 +170,7 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 |---|---|---|
 | `/update` | GET | OTA web page |
 | `/update` | POST | Upload firmware or filesystem image (multipart, `type=firmware` or `filesystem`) |
-| `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending` |
+| `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending`, `libraryVersion` |
 | `/update/reboot` | POST | Restart the device |
 | `/update/rollback` | POST | Boot the previous firmware |
 
