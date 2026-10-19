@@ -26,6 +26,11 @@
 #include <esp_err.h>
 #include <esp_flash_partitions.h>
 
+// Not defined before ESP-IDF 5 - the table occupies one flash sector
+#ifndef ESP_PARTITION_TABLE_SIZE
+#define ESP_PARTITION_TABLE_SIZE 0x1000
+#endif
+
 class CustomOTAPartitions {
 public:
     // Partition entries in table order, without the MD5 entry or terminator
