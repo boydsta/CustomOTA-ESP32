@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.3.0
+ * Version: 1.4.0
  *
  * Author: Boyd Benton
  * Created: 2025
@@ -21,6 +21,10 @@
  * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.4.0 (October 2026):
+ *   - Partition editor: change the partition table over the air from the OTA page
+ *     (-D CUSTOM_OTA_PARTITIONS=1, off by default - with it off the code is the same as 1.3)
+ *
  * v1.3.0 (October 2026):
  *   - Security: uploads are authenticated before anything is written, and
  *     setCredentials() followed by begin(server) no longer disables authentication
@@ -98,9 +102,9 @@
 
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
-#define CUSTOMOTA_VERSION_MINOR 3
+#define CUSTOMOTA_VERSION_MINOR 4
 #define CUSTOMOTA_VERSION_PATCH 0
-#define CUSTOMOTA_VERSION_STRING "1.3.0"
+#define CUSTOMOTA_VERSION_STRING "1.4.0"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 

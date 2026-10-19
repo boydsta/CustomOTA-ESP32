@@ -1,9 +1,14 @@
-# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.3.0-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.4.0-blue.svg)
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and a web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+## What's New in v1.4.0
+
+- **Change the partition table over the air** - Build with `-D CUSTOM_OTA_PARTITIONS=1` and the OTA page can move a device in the field to a new layout, for example bigger app slots. You upload `partitions.bin`, review the checks, then apply. See [Changing the Partition Table Over the Air](#changing-the-partition-table-over-the-air).
+- **Off by default** - Without the flag, 1.4.0 builds the same code as 1.3. To stay on 1.3, see [Staying on v1.3](#staying-on-v13).
 
 ## What's New in v1.3.0
 
@@ -25,6 +30,24 @@ lib_deps =
     mathieucarbou/ESPAsyncWebServer@^3.1.1
     https://github.com/boydsta/CustomOTA-ESP32.git
 ```
+
+An unpinned URL always gets the latest `main`. For production builds, pin a release tag so a library update never changes your firmware unexpectedly:
+```ini
+    https://github.com/boydsta/CustomOTA-ESP32.git#v1.4.0
+```
+
+### Staying on v1.3
+
+Pin the v1.3.0 tag:
+```ini
+lib_deps =
+    mathieucarbou/AsyncTCP@^3.2.3
+    mathieucarbou/ESPAsyncWebServer@^3.1.1
+    https://github.com/boydsta/CustomOTA-ESP32.git#v1.3.0
+```
+Then delete `.pio/libdeps/<env>/CustomOTA` (or run `pio pkg update`) so PlatformIO fetches the pinned version instead of reusing the one it already downloaded.
+
+You can also pin an exact commit: `#<commit hash>` instead of `#v1.3.0`. 1.4.0 without `-D CUSTOM_OTA_PARTITIONS=1` builds the same code as 1.3, so pinning matters only if you want the library itself never to change.
 
 ### Option 2: Manual Installation
 Copy the library to your project's `lib` folder:
@@ -180,9 +203,36 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 
 ## Changing the Partition Table Over the Air
 
-Build with `-D CUSTOM_OTA_PARTITIONS=1` and the OTA page gets a **Partition Table** section. It lets a device in the field move to a new layout, for example bigger app slots, without a USB cable. With the flag off, nothing is compiled in.
+Build with `-D CUSTOM_OTA_PARTITIONS=1` and the OTA page gets a **Partition Table** section. It lets a device in the field move to a new layout, for example bigger app slots, without a USB cable. With the flag off, nothing is compiled in. Tested on hardware moving a production device from 1 MB to 1600 KB app slots (Arduino 2.0.17 / ESP-IDF 4.4).
 
-The steps (the page shows them too):
+### Enabling it
+
+Add the flag and keep your old partition file. A second env for the new layout makes both easy to build:
+
+```ini
+[env:esp32dev]                       ; old layout - devices not moved yet
+board_build.partitions = partitions.csv
+build_flags = -D CUSTOM_OTA_PARTITIONS=1
+
+[env:esp32dev_v2]                    ; new layout
+extends = env:esp32dev
+board_build.partitions = partitions_v2.csv
+```
+
+The flag needs CustomOTA 1.4.0 or later (`#v1.4.0`). Version 1.3 ignores it.
+
+The firmware built by either env runs on either layout: the firmware reads the partition table from flash. The `.csv` only sets PlatformIO's size check and the `partitions.bin`/`spiffs.bin` it builds. The firmware you upload in step 2 below must still fit the **old** app slot.
+
+### Supported files
+
+| Upload | File | Notes |
+|---|---|---|
+| Partition table | `.pio/build/<env>/partitions.bin` | Built from your `.csv` on every build. A `.csv` cannot be uploaded directly. |
+| Filesystem | `.pio/build/<env>/spiffs.bin` (`pio run -t buildfs`) | SPIFFS or LittleFS (both use a `spiffs`-subtype partition). FAT (`ffat`) images are not supported. |
+
+### Steps
+
+The page shows these too:
 
 1. **Make the new table.** Add a new `.csv` next to the old one (keep the old one for devices not yet moved), point `board_build.partitions` at it and build. Upload `.pio/build/<env>/partitions.bin` from that build. Also run `pio run -t buildfs` to get a `spiffs.bin` for the new layout.
 2. **Firmware must be running from the new `ota_0`.** After the change otadata is blank, so the bootloader starts `ota_0` (or `factory`). If the device is running from the other slot, the check says so: upload the current firmware once more and retry.

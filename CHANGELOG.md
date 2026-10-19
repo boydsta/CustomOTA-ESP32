@@ -5,12 +5,23 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] - 2026-10-19
+
+### Staying on 1.3
+1.4.0 only adds the partition editor, and the editor is off unless you build with `-D CUSTOM_OTA_PARTITIONS=1`. Without the flag, 1.4.0 builds the same code as 1.3. To stay on 1.3 anyway, pin the tag in `platformio.ini`:
+```ini
+https://github.com/boydsta/CustomOTA-ESP32.git#v1.3.0
+```
+An unpinned `https://github.com/boydsta/CustomOTA-ESP32.git` (or `#main`) moves to 1.4.0.
 
 ### Added
 - **Partition editor** (`-D CUSTOM_OTA_PARTITIONS=1`, off by default; with it off the code is unchanged) - The OTA page gets a Partition Table section: upload `partitions.bin`, review the new table, its checks and what will be lost, then apply and restart. Built on `CustomOTAPartitions` (`parse`, `check`, `apply`). After a change that moves the filesystem, the page reminds you to upload the filesystem image until one is uploaded.
 - Routes `/update/partitions` (GET, POST), `/update/partitions/apply`, `/update/partitions/cancel`.
 - Rollback is refused while a restart is pending (partition editor builds only), so it cannot write otadata for the old layout.
+- The OTA page and `/update/status` show the CustomOTA version (`libraryVersion`). This was on `main` after the v1.3.0 tag.
+
+### Tested
+- On hardware: a production device moved from 1 MB to 1600 KB app slots over the air (Arduino 2.0.17 / ESP-IDF 4.4). Also builds on the current pioarduino core.
 
 ## [1.3.0] - 2026-10-18
 
