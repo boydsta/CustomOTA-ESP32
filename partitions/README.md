@@ -82,6 +82,10 @@ Now your ESP32 is ready for OTA updates with CustomOTA!
 **"Not enough space"** - Choose a larger partition table for your flash size  
 **"Upload failed"** - Check that your firmware fits in the app partition size
 
+## Changing the Layout of Devices Already in the Field
+
+Devices running a build with `-D CUSTOM_OTA_PARTITIONS=1` can move to a new table from the OTA page, without USB. See "Changing the Partition Table Over the Air" in the main README. Keep the old `.csv` and add the new one beside it, so you can still build for devices that have not moved.
+
 ## Custom Partition Tables
 
 If you need custom sizes, ensure your partition table includes:

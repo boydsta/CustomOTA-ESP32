@@ -133,7 +133,13 @@ CustomOTA::CustomOTA() {
     // Initialize SPIFFS cache variables
     _spiffsMounted = false;
     _hasSpiffsPartition = checkSpiffsPartition();
-    
+
+#if CUSTOM_OTA_PARTITIONS
+    _ptHasPending = false;
+    _ptUpload = nullptr;
+    _ptUploadLen = 0;
+#endif
+
     // Set default build timestamp in dd/mm/yyyy format (will be overridden if setBuildTimestamp is called)
     _buildTimestamp = formatBuildDate();
 }
@@ -244,6 +250,27 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
         handleStatus(request);
     });
     
+#if CUSTOM_OTA_PARTITIONS
+    // apply and cancel before /update/partitions, which would also match them
+    _server->on("/update/partitions/apply", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handlePartitionsApply(request);
+    });
+
+    _server->on("/update/partitions/cancel", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handlePartitionsCancel(request);
+    });
+
+    _server->on("/update/partitions", HTTP_GET, [this](AsyncWebServerRequest *request) {
+        handlePartitionsInfo(request);
+    });
+
+    _server->on("/update/partitions", HTTP_POST, [this](AsyncWebServerRequest *request) {
+        handlePartitionsUploadDone(request);
+    }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        handlePartitionsUpload(request, filename, index, data, len, final);
+    });
+#endif
+
     _server->on("/update/start", HTTP_POST, [this](AsyncWebServerRequest *request) {
         handleUpdateComplete(request);
     }, [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
@@ -599,7 +626,228 @@ const char COTA_OTA_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
             Reboot
         </button>
     </div>
+)rawliteral"
+#if CUSTOM_OTA_PARTITIONS
+R"rawliteral(
+    <hr>
 
+    <style>
+        .pt-table { border-collapse: collapse; width: 100%; font-size: 16px; margin: 10px 0; }
+        .pt-table th, .pt-table td { border: 1px solid #000; padding: 4px 8px; text-align: left; }
+        .pt-table td.num { font-family: monospace; }
+        .pt-table tr.pt-running td { font-weight: bold; }
+        .pt-table tr.pt-changed td { background-color: #fff3cd; }
+        .pt-steps li { margin-bottom: 10px; }
+        .pt-steps code, .pt-box code { background-color: #e8e8e8; padding: 0 3px; }
+        .pt-list li { margin-bottom: 6px; }
+    </style>
+
+    <div class="full-width-box" id="ptSection">
+        <h2>Partition Table (advanced)</h2>
+
+        <div id="ptFsNeeded" class="status error" style="display: none;">
+            The partition table was changed and the filesystem is now empty, so this device's own web pages are missing.
+            Select <strong>Filesystem Update</strong> above and upload the filesystem image built for the new layout
+            (<code>.pio/build/&lt;env&gt;/spiffs.bin</code>).
+        </div>
+
+        <p>The partition table sets how the flash is split between firmware (app slots), the filesystem (spiffs)
+           and saved settings (nvs). Change it only to make room - for example a bigger firmware slot.
+           <strong>Read all the steps before starting.</strong></p>
+
+        <h3>Current table</h3>
+        <table class="pt-table" id="ptCurrent"></table>
+        <p style="font-size: 16px;">Running firmware: <strong id="ptRunning"></strong>
+           (<span id="ptSketch"></span>). Flash: <span id="ptFlash"></span>.</p>
+
+        <details>
+            <summary><strong>How to change the partition table - step by step</strong></summary>
+            <ol class="pt-steps">
+                <li><strong>Make the new table.</strong> Create a new .csv next to your old one (keep the old one), point
+                    <code>board_build.partitions</code> at it in platformio.ini, and build. PlatformIO writes the table to
+                    <code>.pio/build/&lt;env&gt;/partitions.bin</code>. Also build the filesystem image for the new layout:
+                    <code>pio run -t buildfs -e &lt;env&gt;</code> gives <code>.pio/build/&lt;env&gt;/spiffs.bin</code>.</li>
+                <li><strong>Check where the firmware is running.</strong> After the change the device starts the firmware at
+                    the start of the new <code>ota_0</code> slot, so the running firmware must already be there. The check in
+                    step 3 tells you if it is not; then upload the current firmware once more (it runs from the other slot
+                    afterwards) and start again at step 3.</li>
+                <li><strong>Upload partitions.bin below.</strong> Nothing is written yet. The device checks the new table and
+                    shows what changes and what will be lost.</li>
+                <li><strong>Apply.</strong> The device rewrites the table and restarts on the new layout. Writing takes well
+                    under a second - <strong>do not remove power while it happens</strong>. Settings are kept if nvs did not
+                    move.</li>
+                <li><strong>Upload the filesystem image</strong> (Filesystem Update above) if the filesystem moved or changed
+                    size - its files are gone until you do. This update page keeps working without it because it is
+                    built into the firmware. The first start after the change can take up to about 20 seconds while
+                    the new filesystem is formatted.</li>
+                <li><strong>Now upload the bigger firmware.</strong> The new slot size is the limit from here on.</li>
+            </ol>
+            <p style="font-size: 16px;">If the device does not start after the change, reflash it over USB:
+               <code>pio run -t upload</code> then <code>pio run -t uploadfs</code>.</p>
+        </details>
+
+        <div class="upload-area" onclick="document.getElementById('ptFile').click();">
+            <h2>Select partitions.bin</h2>
+            <p>Click here to browse for the new partition table (.pio/build/&lt;env&gt;/partitions.bin)</p>
+            <input type="file" id="ptFile" class="file-input" accept=".bin" onchange="ptUpload(this)">
+        </div>
+
+        <div id="ptPreview" style="display: none;">
+            <h3>New table <span style="font-size: 16px; font-weight: normal;">(changed rows highlighted)</span></h3>
+            <table class="pt-table" id="ptNew"></table>
+            <div id="ptErrorsBox" class="status error" style="display: none;">
+                Cannot apply this table:
+                <ul class="pt-list" id="ptErrors"></ul>
+            </div>
+            <div id="ptWarningsBox" class="status info" style="display: none;">
+                Applying this table will:
+                <ul class="pt-list" id="ptWarnings"></ul>
+            </div>
+            <div class="button-container">
+                <button class="grey-button" id="ptApplyBtn" onclick="ptApply()" disabled>Apply</button>
+                <button class="grey-button" onclick="ptCancel()">Cancel</button>
+            </div>
+        </div>
+
+        <div id="ptStatus" class="status" style="display: none;"></div>
+    </div>
+
+    <script>
+        let ptInfo = null;
+
+        function ptHex(n) { return '0x' + n.toString(16).toUpperCase(); }
+        function ptSize(n) {
+            return (n >= 1048576 && n % 1048576 === 0) ? (n / 1048576) + ' MB' : Math.round(n / 1024) + ' KB';
+        }
+        function ptSame(a, b) {
+            return a.type === b.type && a.subtype === b.subtype && a.offset === b.offset && a.size === b.size;
+        }
+
+        function ptStatus(message, type) {
+            const el = document.getElementById('ptStatus');
+            el.textContent = message;
+            el.className = 'status ' + (type || 'info');
+            el.style.display = message ? 'block' : 'none';
+        }
+
+        // Rows are built with textContent - labels come from the uploaded file
+        function ptRenderTable(id, rows, compareTo, runningOffset) {
+            const table = document.getElementById(id);
+            table.innerHTML = '';
+            const head = table.insertRow();
+            ['Name', 'Type', 'Subtype', 'Offset', 'Size'].forEach(h => {
+                const th = document.createElement('th');
+                th.textContent = h;
+                head.appendChild(th);
+            });
+            rows.forEach(p => {
+                const tr = table.insertRow();
+                if (p.offset === runningOffset && p.type === 'app') tr.className = 'pt-running';
+                if (compareTo && !compareTo.some(c => ptSame(c, p))) tr.className += ' pt-changed';
+                const name = p.label + (p.offset === runningOffset && p.type === 'app' ? ' (running)' : '');
+                [name, p.type, p.subtype, ptHex(p.offset), ptSize(p.size)].forEach((v, i) => {
+                    const td = tr.insertCell();
+                    td.textContent = v;
+                    if (i >= 3) td.className = 'num';
+                });
+            });
+        }
+
+        function ptFillList(id, items) {
+            const ul = document.getElementById(id);
+            ul.innerHTML = '';
+            items.forEach(t => {
+                const li = document.createElement('li');
+                li.textContent = t;
+                ul.appendChild(li);
+            });
+            ul.parentElement.style.display = items.length ? 'block' : 'none';
+        }
+
+        function ptShow(info) {
+            ptInfo = info;
+            ptRenderTable('ptCurrent', info.current, null, info.runningOffset);
+            document.getElementById('ptRunning').textContent = info.running + ' at ' + ptHex(info.runningOffset);
+            document.getElementById('ptSketch').textContent = ptSize(info.sketchSize) + ' firmware';
+            document.getElementById('ptFlash').textContent = ptSize(info.flashSize);
+            document.getElementById('ptFsNeeded').style.display = info.fsNeeded ? 'block' : 'none';
+
+            const preview = document.getElementById('ptPreview');
+            if (!info.pending) {
+                preview.style.display = 'none';
+                return;
+            }
+            preview.style.display = 'block';
+            ptRenderTable('ptNew', info.pending, info.current, info.runningOffset);
+            ptFillList('ptErrors', info.errors);
+            ptFillList('ptWarnings', info.warnings);
+            document.getElementById('ptApplyBtn').disabled = info.errors.length > 0 || info.restartPending;
+            ptStatus(info.errors.length ? 'Fix the problems listed above, then upload partitions.bin again.'
+                                        : 'Checks passed. Read what will be lost, then press Apply.',
+                     info.errors.length ? 'error' : 'info');
+        }
+
+        function ptLoad() {
+            fetch('/update/partitions', { cache: 'no-store' })
+                .then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }))
+                .then(ptShow)
+                .catch(e => ptStatus('Could not read the partition table: ' + e.message, 'error'));
+        }
+        document.addEventListener('DOMContentLoaded', ptLoad);
+
+        function ptUpload(input) {
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+            if (!file.name.toLowerCase().endsWith('.bin')) {
+                ptStatus('Select partitions.bin', 'error');
+                return;
+            }
+            const form = new FormData();
+            form.append('table', file);
+            ptStatus('Checking ' + file.name + '...', 'info');
+            fetch('/update/partitions', { method: 'POST', body: form })
+                .then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }))
+                .then(ptShow)
+                .catch(e => ptStatus(e.message, 'error'));
+        }
+
+        function ptApply() {
+            if (!ptInfo || !ptInfo.pending) return;
+            let message = '\n\nCHANGE THE PARTITION TABLE?\n\n' +
+                '- The device rewrites its partition table and restarts\n' +
+                '- DO NOT remove power until it is back\n' +
+                '- If it does not come back, it must be reflashed over USB\n';
+            if (ptInfo.warnings.length) {
+                message += '\nThis will:\n- ' + ptInfo.warnings.join('\n- ') + '\n';
+            }
+            message += '\nContinue?';
+            if (!confirm(message)) return;
+
+            document.getElementById('ptApplyBtn').disabled = true;
+            ptStatus('Writing the partition table - do not remove power...', 'info');
+            fetch('/update/partitions/apply', { method: 'POST' })
+                .then(r => r.text().then(t => {
+                    if (!r.ok) throw new Error(t);
+                    ptStatus(t + ' This page reloads when the device is back.', 'success');
+                    reloadWhenRestarted();
+                }))
+                .catch(e => {
+                    ptStatus('Apply failed: ' + e.message, 'error');
+                    ptLoad();
+                });
+        }
+
+        function ptCancel() {
+            fetch('/update/partitions/cancel', { method: 'POST' })
+                .then(r => r.text())
+                .then(t => { ptStatus(t, 'info'); ptLoad(); })
+                .catch(e => ptStatus(e.message, 'error'));
+        }
+    </script>
+)rawliteral"
+#endif
+R"rawliteral(
     <p id="libVersion" style="font-size: 12px; color: #888;"></p>
 
     <script>
@@ -1060,6 +1308,10 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
                     COTA_DEBUG_PRINTLN("CustomOTA: SPIFFS remounted successfully - new files available");
                     _spiffsMounted = true;
                     _updateStatus = F("Upload completed successfully. Filesystem update completed successfully. Web interface updated - refresh your browser to see changes.");
+#if CUSTOM_OTA_PARTITIONS
+                    // The filesystem asked for after a partition change has now been uploaded
+                    if (_prefs.isKey("pt_fs_needed")) _prefs.remove("pt_fs_needed");
+#endif
                 } else {
                     COTA_DEBUG_PRINTLN("CustomOTA: WARNING - SPIFFS remount failed, may need manual reboot");
                     _spiffsMounted = false;
@@ -1107,7 +1359,15 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
     }
     
     COTA_DEBUG_PRINTLN("CustomOTA: Manual rollback requested via web interface");
-    
+
+#if CUSTOM_OTA_PARTITIONS
+    // After a partition change otadata belongs to the new layout - leave it alone until the restart
+    if (_restartPending) {
+        request->send(409, "text/plain", "Device is restarting - try again once it is back");
+        return;
+    }
+#endif
+
     if (restoreFromBackup()) {
         request->send(200, "text/plain", "Rollback successful. Device will reboot to previous firmware in " + String(_restartDelay / 1000) + " seconds...");
         COTA_DEBUG_PRINTLN("CustomOTA: Rollback successful, scheduling restart");
@@ -1451,3 +1711,183 @@ bool CustomOTA::checkSpiffsPartition() {
 bool CustomOTA::isSpiffsMounted() {
     return _spiffsMounted;
 }
+
+#if CUSTOM_OTA_PARTITIONS
+
+// Current table, the pending upload (if any) with its check results, and what the page
+// needs for its instructions
+void CustomOTA::handlePartitionsInfo(AsyncWebServerRequest *request) {
+    if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+        return request->requestAuthentication();
+    }
+
+    CustomOTAPartitions::Table current;
+    String err;
+    if (!CustomOTAPartitions::load(current, err)) {
+        request->send(500, "text/plain", err);
+        return;
+    }
+
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    String json;
+    json.reserve(2048);
+    json += F("{\"running\":\"");
+    json += running ? running->label : "";
+    json += F("\",\"runningOffset\":");
+    json += String(running ? running->address : 0);
+    json += F(",\"sketchSize\":");
+    json += String(ESP.getSketchSize());
+    json += F(",\"flashSize\":");
+    json += String(ESP.getFlashChipSize());
+    json += F(",\"fsNeeded\":");
+    json += _prefs.isKey("pt_fs_needed") ? F("true") : F("false");
+    json += F(",\"restartPending\":");
+    json += _restartPending ? F("true") : F("false");
+    json += F(",\"current\":");
+    CustomOTAPartitions::appendJson(json, current);
+
+    if (_ptHasPending) {
+        std::vector<String> errors, warnings;
+        CustomOTAPartitions::check(current, _ptPending, errors, warnings);
+        json += F(",\"pending\":");
+        CustomOTAPartitions::appendJson(json, _ptPending);
+        json += F(",\"errors\":[");
+        for (size_t i = 0; i < errors.size(); i++) {
+            if (i) json += ',';
+            CustomOTAPartitions::appendJsonString(json, errors[i]);
+        }
+        json += F("],\"warnings\":[");
+        for (size_t i = 0; i < warnings.size(); i++) {
+            if (i) json += ',';
+            CustomOTAPartitions::appendJsonString(json, warnings[i]);
+        }
+        json += ']';
+    } else {
+        json += F(",\"pending\":null,\"errors\":[],\"warnings\":[]");
+    }
+    json += '}';
+
+    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json);
+    response->addHeader("Cache-Control", "no-store");
+    request->send(response);
+}
+
+void CustomOTA::handlePartitionsUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    if (index == 0) {
+        free(_ptUpload);
+        _ptUpload = nullptr;
+        _ptUploadLen = 0;
+        _ptUploadErr = "";
+        // Authenticate before keeping anything - the request handler runs after the body
+        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+            return;
+        }
+        _ptUpload = (uint8_t*)malloc(ESP_PARTITION_TABLE_SIZE);
+        if (!_ptUpload) {
+            _ptUploadErr = F("Out of memory receiving the partition table");
+            return;
+        }
+        COTA_DEBUG_PRINTF("CustomOTA: Receiving partition table %s\n", filename.c_str());
+    }
+    if (!_ptUpload || _ptUploadErr.length()) return;
+    if (_ptUploadLen + len > ESP_PARTITION_TABLE_SIZE) {
+        _ptUploadErr = F("This file is too big to be a partition table. Select partitions.bin from .pio/build/<env>/, not firmware.bin or spiffs.bin.");
+        return;
+    }
+    memcpy(_ptUpload + _ptUploadLen, data, len);
+    _ptUploadLen += len;
+}
+
+void CustomOTA::handlePartitionsUploadDone(AsyncWebServerRequest *request) {
+    if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+        free(_ptUpload);
+        _ptUpload = nullptr;
+        return request->requestAuthentication();
+    }
+
+    String err = _ptUploadErr;
+    CustomOTAPartitions::Table table;
+    if (err.length() == 0) {
+        if (!_ptUpload) {
+            err = F("No file received");
+        } else if (CustomOTAPartitions::parse(_ptUpload, _ptUploadLen, table, err)) {
+            _ptPending = table;
+            _ptHasPending = true;
+        }
+    }
+    free(_ptUpload);
+    _ptUpload = nullptr;
+    _ptUploadLen = 0;
+
+    if (err.length()) {
+        request->send(400, "text/plain", err);
+        return;
+    }
+    COTA_DEBUG_PRINTF("CustomOTA: Partition table with %u entries waiting to be applied\n", (unsigned)table.size());
+    handlePartitionsInfo(request);
+}
+
+void CustomOTA::handlePartitionsApply(AsyncWebServerRequest *request) {
+    if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+        return request->requestAuthentication();
+    }
+    if (_restartPending || _updateInProgress || Update.isRunning()) {
+        request->send(409, "text/plain", "An update or restart is in progress - try again once it is finished");
+        return;
+    }
+    if (!_ptHasPending) {
+        request->send(400, "text/plain", "Upload partitions.bin first");
+        return;
+    }
+
+    CustomOTAPartitions::Table current;
+    String err;
+    if (!CustomOTAPartitions::load(current, err)) {
+        request->send(500, "text/plain", err);
+        return;
+    }
+    bool fsChanged = CustomOTAPartitions::filesystemChanged(current, _ptPending);
+
+    // Nothing may write to the old filesystem location once the table has changed
+    if (fsChanged && _spiffsMounted) {
+        SPIFFS.end();
+        _spiffsMounted = false;
+    }
+
+    if (CustomOTAPartitions::apply(current, _ptPending, err) != ESP_OK) {
+        request->send(500, "text/plain", err);
+        return;
+    }
+    _ptHasPending = false;
+    _ptPending.clear();
+
+    // The backup slot may have moved; it is auto-detected again after the restart
+    _prefs.remove("backup_ver");
+    _prefs.remove("backup_part");
+    _prefs.remove("backup_valid");
+    _prefs.remove("backup_size");
+    if (fsChanged) {
+        _prefs.putBool("pt_fs_needed", true);
+    }
+
+    String msg = "Partition table written. The device restarts on the new layout in " +
+                 String(_restartDelay / 1000) + " seconds.";
+    if (fsChanged) {
+        msg += " The filesystem moved, so upload the filesystem image for the new layout once it is back.";
+    }
+    request->send(200, "text/plain", msg);
+    COTA_DEBUG_PRINTLN("CustomOTA: Partition table changed - restarting");
+    _restartPending = true;
+    _restartRequestedAt = millis();
+}
+
+void CustomOTA::handlePartitionsCancel(AsyncWebServerRequest *request) {
+    if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+        return request->requestAuthentication();
+    }
+    _ptHasPending = false;
+    _ptPending.clear();
+    request->send(200, "text/plain", "Cancelled - the partition table was not changed");
+}
+
+#endif // CUSTOM_OTA_PARTITIONS

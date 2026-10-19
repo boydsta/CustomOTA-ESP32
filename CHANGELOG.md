@@ -5,6 +5,13 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Partition editor** (`-D CUSTOM_OTA_PARTITIONS=1`, off by default; with it off the code is unchanged) - The OTA page gets a Partition Table section: upload `partitions.bin`, review the new table, its checks and what will be lost, then apply and restart. Built on `CustomOTAPartitions` (`parse`, `check`, `apply`). After a change that moves the filesystem, the page reminds you to upload the filesystem image until one is uploaded.
+- Routes `/update/partitions` (GET, POST), `/update/partitions/apply`, `/update/partitions/cancel`.
+- Rollback is refused while a restart is pending (partition editor builds only), so it cannot write otadata for the old layout.
+
 ## [1.3.0] - 2026-10-18
 
 ### Security

@@ -5,6 +5,8 @@
  * Only compiled when the project sets -D CUSTOM_OTA_PARTITIONS=1, so projects that
  * do not use the partition editor pay nothing for it.
  *
+ * The web page drives it as upload partitions.bin -> preview with check() -> apply() -> restart.
+ *
  * WARNING: the partition table has no backup copy. A power loss between the erase and
  * the write of the table sector leaves the device unbootable until it is reflashed
  * over serial. The window is one sector erase plus write (about 50 ms).
@@ -52,6 +54,29 @@ public:
 
     // True when the given sector matches what is in flash now
     static bool matchesFlash(const uint8_t* sector);
+
+    // Parses an uploaded partitions.bin as built by PlatformIO (gen_esp32part.py).
+    // On failure returns false and sets err.
+    static bool parse(const uint8_t* data, size_t len, Table& table, String& err);
+
+    // Checks that next can replace current on this device, as it is running now.
+    // Errors block apply(); warnings say what will be lost.
+    static void check(const Table& current, const Table& next,
+                      std::vector<String>& errors, std::vector<String>& warnings);
+
+    // Replaces current with next: erases otadata (so the bootloader starts ota_0, where the
+    // running firmware is), clears changed nvs/coredump partitions and the headers of changed
+    // app slots, then writes the table. Restart afterwards to use the new layout.
+    static esp_err_t apply(const Table& current, const Table& next, String& err);
+
+    // True when a spiffs/fat/littlefs partition in next is new, moved or resized
+    static bool filesystemChanged(const Table& current, const Table& next);
+
+    // Appends the table as a JSON array of {label,type,subtype,offset,size}
+    static void appendJson(String& out, const Table& table);
+
+    // Appends s as a quoted, escaped JSON string
+    static void appendJsonString(String& out, const String& s);
 
     // Readable names for logging and the web page
     static const char* typeName(uint8_t type);

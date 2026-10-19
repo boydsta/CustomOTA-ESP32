@@ -173,6 +173,27 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 | `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending`, `libraryVersion` |
 | `/update/reboot` | POST | Restart the device |
 | `/update/rollback` | POST | Boot the previous firmware |
+| `/update/partitions` | GET | JSON: current partition table, running slot, pending table with its check errors/warnings (partition editor only) |
+| `/update/partitions` | POST | Upload a `partitions.bin` to check - nothing is written (partition editor only) |
+| `/update/partitions/apply` | POST | Write the checked table and restart (partition editor only) |
+| `/update/partitions/cancel` | POST | Discard the uploaded table (partition editor only) |
+
+## Changing the Partition Table Over the Air
+
+Build with `-D CUSTOM_OTA_PARTITIONS=1` and the OTA page gets a **Partition Table** section. It lets a device in the field move to a new layout, for example bigger app slots, without a USB cable. With the flag off, nothing is compiled in.
+
+The steps (the page shows them too):
+
+1. **Make the new table.** Add a new `.csv` next to the old one (keep the old one for devices not yet moved), point `board_build.partitions` at it and build. Upload `.pio/build/<env>/partitions.bin` from that build. Also run `pio run -t buildfs` to get a `spiffs.bin` for the new layout.
+2. **Firmware must be running from the new `ota_0`.** After the change otadata is blank, so the bootloader starts `ota_0` (or `factory`). If the device is running from the other slot, the check says so: upload the current firmware once more and retry.
+3. **Upload `partitions.bin`.** The device checks it and shows the new table with changed rows highlighted. Nothing is written yet.
+4. **Apply.** The device erases otadata, any changed nvs/coredump partitions and the first sector of a moved backup slot, then writes the table and restarts.
+5. **Upload the filesystem image** if the filesystem moved or was resized. The page shows a reminder until you do.
+6. **Upload larger firmware** - the new slot size applies from now on.
+
+What the check refuses: a file that isn't a valid table, overlaps, misalignment (4 KB, 64 KB for apps), anything before 0x9000 or past the end of flash, a missing otadata/ota_0/ota_1, a boot slot that isn't where the running firmware is or is too small for it, more than 256 KB of nvs/coredump to clear, and devices with flash encryption or secure boot. What it warns about: nvs moved (settings erased), filesystem moved (files lost), backup slot moved (no rollback until the next update), coredump cleared, partitions removed.
+
+**Risks:** the partition table has no backup copy. If power is lost during the write (well under a second) the device will not boot until it is reflashed over USB. Filesystems are not erased; the app must format the new one on first boot (`SPIFFS.begin(true)`), which can take 10-20 s. Do this before arming a task watchdog.
 
 ## Customizing the Page
 

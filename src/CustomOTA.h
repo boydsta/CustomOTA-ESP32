@@ -125,6 +125,9 @@
 #include <Preferences.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#if CUSTOM_OTA_PARTITIONS
+#include "CustomOTAPartitions.h"
+#endif
 
 // Debug macros - controlled by CUSTOM_OTA_DEBUG build flag
 #if CUSTOM_OTA_DEBUG
@@ -192,6 +195,21 @@ private:
     
     // SPIFFS mount status helper
     bool isSpiffsMounted();
+
+#if CUSTOM_OTA_PARTITIONS
+    // Partition editor: an uploaded table is held here until it is applied or cancelled
+    CustomOTAPartitions::Table _ptPending;
+    bool _ptHasPending;
+    uint8_t* _ptUpload;      // partitions.bin being received
+    size_t _ptUploadLen;
+    String _ptUploadErr;
+
+    void handlePartitionsInfo(AsyncWebServerRequest *request);
+    void handlePartitionsUploadDone(AsyncWebServerRequest *request);
+    void handlePartitionsUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+    void handlePartitionsApply(AsyncWebServerRequest *request);
+    void handlePartitionsCancel(AsyncWebServerRequest *request);
+#endif
 
 public:
     CustomOTA();
