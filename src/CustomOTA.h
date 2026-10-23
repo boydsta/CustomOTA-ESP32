@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.4.0
+ * Version: 1.5.0
  *
  * Author: Boyd Benton
  * Created: 2025
@@ -21,6 +21,13 @@
  * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.5.0 (October 2026):
+ *   - Update gate: setUpdateAllowed(allowed, reason) lets the application block updates,
+ *     reboot, rollback and partition changes while it is not safe to restart (e.g. a
+ *     vehicle that is running). Blocked requests get 409 + reason, an upload in progress
+ *     is aborted, and a pending restart is held until updates are allowed again.
+ *     Default is allowed, so existing applications are unaffected.
+ *
  * v1.4.0 (October 2026):
  *   - Partition editor: change the partition table over the air from the OTA page
  *     (-D CUSTOM_OTA_PARTITIONS=1, off by default - with it off the code is the same as 1.3)
@@ -102,9 +109,9 @@
 
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
-#define CUSTOMOTA_VERSION_MINOR 4
+#define CUSTOMOTA_VERSION_MINOR 5
 #define CUSTOMOTA_VERSION_PATCH 0
-#define CUSTOMOTA_VERSION_STRING "1.4.0"
+#define CUSTOMOTA_VERSION_STRING "1.5.0"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 
@@ -175,7 +182,14 @@ private:
     unsigned long _restartRequestedAt; // millis() when the restart was scheduled
     unsigned long _restartDelay; // Configurable restart delay in milliseconds
     bool _allowSpiffsFormat; // Control SPIFFS formatting on mount failure
-    
+
+    // Update gate - set by the application from its main loop, read by the web handlers
+    // (AsyncTCP task), hence volatile. The reason is a pointer to a static string.
+    volatile bool _updateAllowed;
+    const char* volatile _blockedReason;
+    bool _uploadBlocked; // Current upload was refused or aborted by the gate
+    const char* blockedReason();
+
     // SPIFFS mount status cache - avoid repeated mounting
     bool _spiffsMounted;
     bool _hasSpiffsPartition;
@@ -225,7 +239,17 @@ public:
     void setBuildTimestamp(const char* timestamp);
     void setRestartDelay(unsigned long delayMs); // Set restart delay for firmware updates
     void setSpiffsFormatOnFailure(bool allowFormat); // Control SPIFFS formatting behavior on mount failure
-    
+
+    // Allow or block updates, reboot, rollback and partition changes (default: allowed).
+    // While blocked: new requests get 409 + reason, an upload in progress is aborted at its
+    // next chunk (the running firmware is untouched), and a restart that is already
+    // scheduled is held until allowed again. Call it from the main loop with the
+    // application's own "safe to restart" condition.
+    // reason must be a string literal or other static string, without double quotes or
+    // backslashes (it is sent as-is in the /update/status JSON). nullptr = default text.
+    void setUpdateAllowed(bool allowed, const char* reason = nullptr);
+    bool isUpdateAllowed() { return _updateAllowed; }
+
     // Version information functions
     static String getLibraryVersion() { return String(CUSTOMOTA_VERSION_STRING); }
     static int getVersionMajor() { return CUSTOMOTA_VERSION_MAJOR; }
@@ -251,7 +275,9 @@ public:
     bool isUpdateInProgress() { return _updateInProgress; }
     String getUpdateStatus() { return _updateStatus; }
     int getUpdateProgress() { return _updateProgress; }
-    bool shouldRestart() { return _restartPending && (millis() - _restartRequestedAt >= _restartDelay); }
+    bool isRestartPending() { return _restartPending; }
+    // A held restart (updates blocked) only runs once updates are allowed again
+    bool shouldRestart() { return _updateAllowed && _restartPending && (millis() - _restartRequestedAt >= _restartDelay); }
     
     // HEAP OPTIMIZATION: Memory monitoring functions
     size_t getFreeHeap() { return ESP.getFreeHeap(); }

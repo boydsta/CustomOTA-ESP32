@@ -5,6 +5,22 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-10-23
+
+### Added
+- **Update gate** - `setUpdateAllowed(bool allowed, const char* reason = nullptr)`. While blocked:
+  - firmware/filesystem uploads, `/update/reboot`, `/update/rollback` and `/update/partitions/apply` are refused with **409** and the reason;
+  - an upload already in progress is aborted at its next chunk (running firmware untouched);
+  - a restart that is already scheduled is held, and runs once updates are allowed again.
+  Default is allowed, so applications that don't call it are unchanged.
+- `isUpdateAllowed()` and `isRestartPending()`.
+- `/update/status` reports `updateAllowed` and `blockedReason`.
+- OTA page shows the blocked reason and greys out Upload, Reboot, Rollback and partition Apply while blocked. It re-checks the gate every 5 seconds.
+
+### Changed
+- `shouldRestart()` is false while updates are blocked.
+- A failed reboot request now shows the device's reply on the OTA page, not only the HTTP code.
+
 ## [1.4.0] - 2026-10-19
 
 ### Staying on 1.3

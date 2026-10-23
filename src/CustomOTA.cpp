@@ -129,7 +129,10 @@ CustomOTA::CustomOTA() {
     _restartRequestedAt = 0;
     _restartDelay = 3000; // Default 3 seconds
     _allowSpiffsFormat = true; // Default to allowing format for compatibility
-    
+    _updateAllowed = true; // Default allowed - only applications that call setUpdateAllowed() are gated
+    _blockedReason = nullptr;
+    _uploadBlocked = false;
+
     // Initialize SPIFFS cache variables
     _spiffsMounted = false;
     _hasSpiffsPartition = checkSpiffsPartition();
@@ -334,6 +337,21 @@ void CustomOTA::setRestartDelay(unsigned long delayMs) {
 void CustomOTA::setSpiffsFormatOnFailure(bool allowFormat) {
     _allowSpiffsFormat = allowFormat;
     COTA_DEBUG_PRINTF("CustomOTA: SPIFFS format on failure set to: %s\n", allowFormat ? "enabled" : "disabled");
+}
+
+void CustomOTA::setUpdateAllowed(bool allowed, const char* reason) {
+    // Called every loop by gated applications - only log changes
+    if (allowed != _updateAllowed) {
+        COTA_DEBUG_PRINTF("CustomOTA: Updates %s\n", allowed ? "allowed" : "blocked");
+    }
+    // Reason first, so a handler that sees the gate closed also sees its reason
+    _blockedReason = reason;
+    _updateAllowed = allowed;
+}
+
+const char* CustomOTA::blockedReason() {
+    const char* reason = _blockedReason;
+    return reason ? reason : "Updates are disabled by the application";
 }
 
 void CustomOTA::refreshBackupStatus() {
@@ -611,7 +629,9 @@ const char COTA_OTA_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
     </div>
     
     <div id="statusMessage" class="status" style="display: none;"></div>
-    
+
+    <div id="blockedMessage" class="status error" style="display: none;"></div>
+
     <div class="button-container">
         <button class="grey-button" id="uploadBtn" onclick="uploadUpdate()" disabled>
             Upload
@@ -622,7 +642,7 @@ const char COTA_OTA_PAGE[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         <button class="grey-button" id="noBackupBtn" style="display: none;" onclick="alert('Rollback functionality available - ESP32 dual partition system automatically preserves previous firmware')" title="ESP32 dual partition system automatically preserves previous firmware - rollback available when other partition has valid firmware">
             Enable Rollback
         </button>
-        <button class="grey-button" onclick="rebootDevice()">
+        <button class="grey-button" id="rebootBtn" onclick="rebootDevice()">
             Reboot
         </button>
     </div>
@@ -853,6 +873,31 @@ R"rawliteral(
     <script>
         let cotaSelectedFile = null;
         let cotaUpdateType = 'firmware';
+        let cotaUpdateBlocked = false;
+
+        // Update gate (setUpdateAllowed): show the reason and grey out the buttons while
+        // blocked. The device refuses blocked requests anyway - this just says why up front.
+        function applyGate(s) {
+            cotaUpdateBlocked = (s.updateAllowed === false);
+            const msg = document.getElementById('blockedMessage');
+            msg.textContent = cotaUpdateBlocked ? 'Updates blocked: ' + (s.blockedReason || 'disabled by the application') : '';
+            msg.style.display = cotaUpdateBlocked ? 'block' : 'none';
+            document.getElementById('uploadBtn').disabled = cotaUpdateBlocked || !cotaSelectedFile;
+            ['rebootBtn', 'rollbackBtn', 'ptApplyBtn'].forEach(id => {
+                const b = document.getElementById(id);
+                if (b && cotaUpdateBlocked) b.disabled = true;
+                else if (b && id !== 'ptApplyBtn') b.disabled = false; // ptApplyBtn is managed by ptShow()
+            });
+        }
+
+        // The gate can change while the page is open (e.g. key turned on), so keep checking
+        function pollGate() {
+            fetch('/update/status', { cache: 'no-store' })
+                .then(r => r.json())
+                .then(applyGate)
+                .catch(() => {})
+                .finally(() => setTimeout(pollGate, 5000));
+        }
 
         // Device details come from /update/status so the page itself can be served from flash
         function loadDeviceInfo() {
@@ -872,8 +917,10 @@ R"rawliteral(
                     if (s.canRollback) {
                         document.getElementById(s.hasBackup ? 'rollbackBtn' : 'noBackupBtn').style.display = '';
                     }
+                    applyGate(s);
                 })
-                .catch(() => showStatus('Could not load device information', 'error'));
+                .catch(() => showStatus('Could not load device information', 'error'))
+                .finally(() => setTimeout(pollGate, 5000));
         }
         document.addEventListener('DOMContentLoaded', loadDeviceInfo);
 
@@ -920,7 +967,7 @@ R"rawliteral(
             if (cotaFile && cotaFile.name && cotaFile.name.toLowerCase().endsWith('.bin')) {
                 cotaSelectedFile = cotaFile;
                 const uploadBtn = document.getElementById('uploadBtn');
-                if (uploadBtn) uploadBtn.disabled = false;
+                if (uploadBtn) uploadBtn.disabled = cotaUpdateBlocked;
                 showStatus('File selected: ' + cotaFile.name + ' (' + cotaUpdateType + ' update)', 'info');
             } else {
                 showStatus('Please select a valid .bin file', 'error');
@@ -1038,14 +1085,14 @@ Continue with filesystem update?`;
                 showStatus('Sending reboot command...', 'info');
                 
                 fetch('/update/reboot', { method: 'POST' })
-                    .then(response => {
+                    .then(response => response.text().then(result => {
                         if (response.ok) {
                             showStatus('Device is restarting...', 'success');
                             reloadWhenRestarted();
                         } else {
-                            showStatus('Reboot failed: HTTP ' + response.status, 'error');
+                            showStatus('Reboot failed (HTTP ' + response.status + '): ' + result, 'error');
                         }
-                    })
+                    }))
                     .catch(err => showStatus('Reboot failed: ' + err.message, 'error'));
             }
         }
@@ -1079,7 +1126,9 @@ void CustomOTA::handleUpdateComplete(AsyncWebServerRequest *request) {
         return request->requestAuthentication();
     }
 
-    if (_uploadError) {
+    if (_uploadBlocked) {
+        request->send(409, "text/plain", _updateStatus);
+    } else if (_uploadError) {
         request->send(500, "text/plain", _updateStatus);
     } else if (_uploadComplete) {
         request->send(200, "text/plain", _updateStatus);
@@ -1094,12 +1143,14 @@ void CustomOTA::handleUpdateComplete(AsyncWebServerRequest *request) {
     }
     _uploadError = false;
     _uploadComplete = false;
+    _uploadBlocked = false;
 }
 
 void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
     if (index == 0) {
         _uploadError = false;
         _uploadComplete = false;
+        _uploadBlocked = false;
         _updateInProgress = false;
 
         // Authenticate before writing anything - the request handler only runs after the
@@ -1113,6 +1164,14 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             _updateStatus = F("Device is restarting - try again once it is back");
             _uploadError = true;
             return;
+        }
+
+        if (!_updateAllowed) {
+            _updateStatus = String(F("Update blocked: ")) + blockedReason();
+            _uploadError = true;
+            _uploadBlocked = true;
+            COTA_DEBUG_PRINTLN("CustomOTA: Upload refused - updates are blocked");
+            return; // _updateInProgress stays false, so remaining chunks are ignored
         }
 
         if (Update.isRunning()) {
@@ -1170,7 +1229,21 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Upload received but no update in progress");
         return; // Skip this chunk
     }
-    
+
+    // Gate closed mid-upload: abort before writing more. The boot partition is only
+    // switched after a complete upload, so the running firmware is untouched.
+    if (!_updateAllowed) {
+        if (Update.isRunning()) {
+            Update.abort();
+        }
+        _updateInProgress = false;
+        _uploadError = true;
+        _uploadBlocked = true;
+        _updateStatus = String(F("Update aborted: ")) + blockedReason();
+        COTA_DEBUG_PRINTLN("CustomOTA: Upload aborted - updates were blocked mid-upload");
+        return;
+    }
+
     if (index == 0) {
         COTA_DEBUG_PRINTLN("==========================================");
         COTA_DEBUG_PRINTF("CustomOTA: Update Start: %s (%s)\n", filename.c_str(), _updateType == 0 ? "firmware" : "filesystem");
@@ -1342,6 +1415,11 @@ void CustomOTA::handleReboot(AsyncWebServerRequest *request) {
         return request->requestAuthentication();
     }
 
+    if (!_updateAllowed) {
+        request->send(409, "text/plain", String(F("Reboot blocked: ")) + blockedReason());
+        return;
+    }
+
     // Deferred restart so the response actually reaches the browser - send() only
     // queues it, and restarting here would drop it
     COTA_DEBUG_PRINTLN("CustomOTA: Manual reboot requested, scheduling restart");
@@ -1359,6 +1437,12 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
     }
     
     COTA_DEBUG_PRINTLN("CustomOTA: Manual rollback requested via web interface");
+
+    // restoreFromBackup() switches the boot partition straight away, so refuse before it
+    if (!_updateAllowed) {
+        request->send(409, "text/plain", String(F("Rollback blocked: ")) + blockedReason());
+        return;
+    }
 
 #if CUSTOM_OTA_PARTITIONS
     // After a partition change otadata belongs to the new layout - leave it alone until the restart
@@ -1388,7 +1472,7 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
 
 void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
     // HEAP OPTIMIZATION: Use efficient JSON building with minimal String operations
-    char jsonBuffer[768];
+    char jsonBuffer[1024]; // Room for the application's blocked reason
     size_t freeHeap = ESP.getFreeHeap();
     size_t totalHeap = ESP.getHeapSize();
     size_t heapPercent = (freeHeap * 100) / totalHeap;
@@ -1416,6 +1500,8 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         "\"backupPartition\":\"%s\","
         "\"canRollback\":%s,"
         "\"restartPending\":%s,"
+        "\"updateAllowed\":%s,"
+        "\"blockedReason\":\"%s\","
         "\"libraryVersion\":\"" CUSTOMOTA_VERSION_STRING "\""
         "}",
         _updateInProgress ? "true" : "false",
@@ -1434,7 +1520,9 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         running ? running->label : "",
         (backup && backup != running) ? backup->label : "",
         canRollback ? "true" : "false",
-        _restartPending ? "true" : "false"
+        _restartPending ? "true" : "false",
+        _updateAllowed ? "true" : "false",
+        _updateAllowed ? "" : blockedReason()
     );
     
     request->send(200, "application/json", jsonBuffer);
@@ -1833,6 +1921,10 @@ void CustomOTA::handlePartitionsApply(AsyncWebServerRequest *request) {
     }
     if (_restartPending || _updateInProgress || Update.isRunning()) {
         request->send(409, "text/plain", "An update or restart is in progress - try again once it is finished");
+        return;
+    }
+    if (!_updateAllowed) {
+        request->send(409, "text/plain", String(F("Partition change blocked: ")) + blockedReason());
         return;
     }
     if (!_ptHasPending) {

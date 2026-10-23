@@ -1,9 +1,14 @@
-# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.4.0-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.5.0-blue.svg)
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and a web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+## What's New in v1.5.0
+
+- **Update gate** - `setUpdateAllowed(allowed, reason)` lets your application block firmware updates, reboot, rollback and partition changes while restarting would be unsafe, for example while a vehicle is running. Blocked requests are refused with the reason, an upload in progress is aborted, and a restart that is already scheduled waits until updates are allowed again. See [Blocking Updates While Unsafe](#blocking-updates-while-unsafe).
+- **No change unless you use it** - Updates are allowed by default, so applications that never call `setUpdateAllowed()` behave exactly as on 1.4.
 
 ## What's New in v1.4.0
 
@@ -33,7 +38,7 @@ lib_deps =
 
 An unpinned URL always gets the latest `main`. For production builds, pin a release tag so a library update never changes your firmware unexpectedly:
 ```ini
-    https://github.com/boydsta/CustomOTA-ESP32.git#v1.4.0
+    https://github.com/boydsta/CustomOTA-ESP32.git#v1.5.0
 ```
 
 ### Staying on v1.3
@@ -153,12 +158,15 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 - `setRestartDelay(unsigned long delayMs)` - Delay between replying to the browser and restarting, after a firmware update, reboot or rollback (default: 3000ms)
 - `setSpiffsFormatOnFailure(bool allowFormat)` - Control automatic SPIFFS formatting on mount failure (default: true)
 - `setBuildTimestamp(const char* timestamp)` - Override the build timestamp (by default PlatformIO builds set it automatically via `build_timestamp.py`)
+- `setUpdateAllowed(bool allowed, const char* reason = nullptr)` - Allow or block updates, reboot, rollback and partition changes (default: allowed). Call it from `loop()` with your own "safe to restart" condition. See [Blocking Updates While Unsafe](#blocking-updates-while-unsafe)
 
 ### Status Methods
 - `isUpdateInProgress()` - Check if update is in progress
 - `getUpdateStatus()` - Get current update status string
 - `getUpdateProgress()` - Get update progress percentage (0-100)
-- `shouldRestart()` - Check if device should restart (for deferred restart handling)
+- `shouldRestart()` - Check if device should restart (for deferred restart handling). Always false while updates are blocked
+- `isRestartPending()` - A restart has been scheduled (after an update, reboot, rollback or partition change), including one held by the update gate
+- `isUpdateAllowed()` - Current state of the update gate
 
 ### Static Information Methods
 - `CustomOTA::getLibraryVersion()` - Get library version string
@@ -193,13 +201,53 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 |---|---|---|
 | `/update` | GET | OTA web page |
 | `/update` | POST | Upload firmware or filesystem image (multipart, `type=firmware` or `filesystem`) |
-| `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending`, `libraryVersion` |
+| `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending`, `updateAllowed`, `blockedReason`, `libraryVersion` |
 | `/update/reboot` | POST | Restart the device |
 | `/update/rollback` | POST | Boot the previous firmware |
 | `/update/partitions` | GET | JSON: current partition table, running slot, pending table with its check errors/warnings (partition editor only) |
 | `/update/partitions` | POST | Upload a `partitions.bin` to check - nothing is written (partition editor only) |
 | `/update/partitions/apply` | POST | Write the checked table and restart (partition editor only) |
 | `/update/partitions/cancel` | POST | Discard the uploaded table (partition editor only) |
+
+While updates are blocked with `setUpdateAllowed(false, ...)`, `POST /update`, `/update/reboot`, `/update/rollback` and `/update/partitions/apply` answer **409** with the reason. Uploading a `partitions.bin` to check it (`POST /update/partitions`) still works, because nothing is written.
+
+## Blocking Updates While Unsafe
+
+Some devices must not restart at certain times, for example a vehicle controller while the vehicle is running. Call `setUpdateAllowed()` every loop with your own condition:
+
+```cpp
+void setup() {
+    // ...
+    ota.setUpdateAllowed(false, "Starting up"); // Block until loop() has checked the condition
+    ota.begin(&server);
+    server.begin();
+}
+
+void loop() {
+    // Only allow updates and restarts with the machine stopped
+    bool safe = machineIsStopped();
+    ota.setUpdateAllowed(safe, "Machine must be stopped");
+    ota.handle();
+}
+```
+
+While blocked:
+
+| Action | What happens |
+|---|---|
+| Firmware or filesystem upload | Refused with 409 and the reason - nothing is written |
+| Upload already in progress | Aborted at its next chunk. The running firmware is untouched, because the boot partition is only switched after a complete upload |
+| Reboot, rollback, partition apply | Refused with 409 and the reason. Rollback is refused before the boot partition is changed |
+| Restart already scheduled (e.g. upload finished just before the gate closed) | Held, not cancelled. It runs as soon as updates are allowed again |
+| OTA page | Shows the reason and greys out the buttons. It re-checks every 5 seconds, so it follows the gate while open |
+
+Notes:
+
+- **Default is allowed.** Only applications that call `setUpdateAllowed()` are affected.
+- **`reason` must be a static string** (a string literal or a global), because the library keeps the pointer. It must not contain double quotes or backslashes, because it is sent as-is in the `/update/status` JSON. `nullptr` uses a default message.
+- **Thread safety** - `setUpdateAllowed()` is meant to be called from `loop()`. The web handlers run in the AsyncTCP task and read the gate on every request and upload chunk.
+- **Held restarts** - If the gate opens again a long time after a restart was scheduled, the restart happens immediately. Check `isRestartPending()` if your application needs to know one is waiting, for example to delay sleeping.
+- **The boot partition may already be switched** - After a complete firmware upload, the new firmware is the boot partition even while its restart is held. A power cycle in that window boots the new (fully verified) firmware.
 
 ## Changing the Partition Table Over the Air
 
@@ -331,6 +379,7 @@ This provides extensive debug information including:
 - **No blocking operations** - All functions return quickly
 - **Minimal memory footprint** - Optimized for resource-constrained devices
 - **Deferred operations** - Time-sensitive tasks use millis() timing
+- **Update gate** - Use `setUpdateAllowed()` to stop updates and restarts while the device is doing something it must not be interrupted in
 
 ### Memory Usage
 - **Base memory**: ~8KB RAM
