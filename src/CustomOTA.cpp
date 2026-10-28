@@ -22,6 +22,20 @@
 #endif
 #include "CustomOTA.h"
 #include <esp_partition.h>
+#include <esp_image_format.h>
+
+// Full check of an app image - header, segments and checksum/SHA-256 - the same check the
+// bootloader and esp_ota_set_boot_partition() make. A failed upload can leave a valid
+// header in the spare slot, so looking at the first bytes is not enough.
+// Reads the whole image: well under a second for a typical app.
+static bool isValidAppImage(const esp_partition_t* part) {
+    if (!part) {
+        return false;
+    }
+    const esp_partition_pos_t pos = { part->address, part->size };
+    esp_image_metadata_t data;
+    return esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &pos, &data) == ESP_OK;
+}
 
 // OTA web page, defined further down
 extern const char COTA_OTA_PAGE[];
@@ -120,11 +134,16 @@ CustomOTA::CustomOTA() {
     _updateStatus = "Ready";
     _hasValidBackup = false;
     _backupSize = 0;
+    _backupChecked = false;
+    _backupGen = 0;
+    _backupSlotWritten = false;
+    _backupCheckDelay = 5000; // Default 5 seconds after begin()
     _updateType = 0; // Default to firmware
     _uploadError = false;
     _uploadComplete = false;
     _lastReportedProgress = -1;
     _lastUploadFailed = false;
+    _uploadRequest = nullptr;
     _lastChunkAt = 0;
     _uploadTimeout = 30000; // Default 30 seconds without data
     _server = nullptr;
@@ -238,7 +257,21 @@ void CustomOTA::begin(AsyncWebServer* server, const char* username, const char* 
     // Initialize preferences
     COTA_DEBUG_PRINTLN("CustomOTA: Initializing preferences...");
     _prefs.begin("customota", false);
-    loadUpdateInfo();
+    // Verifying the backup slot reads the whole image, so do it in the background after
+    // _backupCheckDelay rather than holding up begin(). Low priority, and on the other core
+    // from loop() where there is one, so it doesn't interrupt the application.
+    _backupChecked = false;
+    COTA_DEBUG_PRINTF("CustomOTA: Checking the backup slot in the background in %lu ms\n", _backupCheckDelay);
+#if CONFIG_FREERTOS_UNICORE
+    BaseType_t started = xTaskCreate(backupCheckTask, "cota_backup", 4096, this, 1, nullptr);
+#else
+    BaseType_t started = xTaskCreatePinnedToCore(backupCheckTask, "cota_backup", 4096, this, 1, nullptr, 0);
+#endif
+    if (started != pdPASS) {
+        COTA_DEBUG_PRINTLN("CustomOTA: Could not start the background backup check - checking now");
+        loadUpdateInfo();
+        _backupChecked = true;
+    }
     
     COTA_DEBUG_PRINTLN("CustomOTA: Setting up web routes...");
     // Setup web routes
@@ -317,11 +350,8 @@ void CustomOTA::begin(AsyncWebServer* server) {
 
 void CustomOTA::setFirmwareVersion(const char* version) {
     _firmwareVersion = String(version);
-    // Refresh backup status now that we have the firmware version
-    // Use isKey() to avoid NVS errors when key doesn't exist
-    if (_prefs.isKey("backup_ver")) {
-        loadUpdateInfo();
-    }
+    // Backup detection doesn't depend on the version, and verifying the backup slot is slow,
+    // so this no longer re-checks it - the background check started by begin() does that
 }
 
 void CustomOTA::setHardwareID(const char* id) {
@@ -363,8 +393,33 @@ const char* CustomOTA::blockedReason() {
 }
 
 void CustomOTA::refreshBackupStatus() {
+    if (!_backupChecked) {
+        return; // The background check will set it
+    }
     COTA_DEBUG_PRINTLN("CustomOTA: Refreshing backup status...");
     loadUpdateInfo();
+}
+
+void CustomOTA::setBackupCheckDelay(unsigned long delayMs) {
+    _backupCheckDelay = delayMs;
+}
+
+void CustomOTA::backupCheckTask(void* arg) {
+    CustomOTA* self = static_cast<CustomOTA*>(arg);
+    if (self->_backupCheckDelay > 0) {
+        vTaskDelay(pdMS_TO_TICKS(self->_backupCheckDelay)); // Own task - doesn't block loop()
+    }
+    uint32_t gen = self->_backupGen;
+    unsigned long start = millis();
+    self->loadUpdateInfo();
+    // An upload that started writing the backup slot meanwhile makes the result stale
+    if (self->_backupGen != gen) {
+        self->_hasValidBackup = false;
+    }
+    self->_backupChecked = true;
+    COTA_DEBUG_PRINTF("CustomOTA: Backup check done in %lu ms - %s\n", millis() - start,
+                      self->_hasValidBackup ? "backup available" : "no valid backup");
+    vTaskDelete(nullptr);
 }
 
 // HEAP OPTIMIZATION: The OTA page is a constant in flash and is streamed straight from there,
@@ -927,12 +982,21 @@ R"rawliteral(
             });
         }
 
-        // The gate and upload state can change while the page is open (e.g. key turned on,
-        // or an upload from another browser), so keep checking
+        // Rollback button. The device checks its backup slot in the background a few seconds
+        // after starting, so show neither button until that check has finished.
+        function applyBackup(s) {
+            if (!s.canRollback) return;
+            const checked = s.backupChecked !== false;
+            document.getElementById('rollbackBtn').style.display = s.hasBackup ? '' : 'none';
+            document.getElementById('noBackupBtn').style.display = (checked && !s.hasBackup) ? '' : 'none';
+        }
+
+        // The gate, upload state and backup can change while the page is open (e.g. key
+        // turned on, or an upload from another browser), so keep checking
         function pollGate() {
             fetch('/update/status', { cache: 'no-store' })
                 .then(r => r.json())
-                .then(s => { applyUploadState(s, false); applyGate(s); })
+                .then(s => { applyUploadState(s, false); applyBackup(s); applyGate(s); })
                 .catch(() => {})
                 .finally(() => setTimeout(pollGate, 5000));
         }
@@ -952,9 +1016,7 @@ R"rawliteral(
                     document.getElementById('fwRunning').textContent = s.runningPartition || 'UNKNOWN';
                     document.getElementById('fwBackup').textContent = s.backupPartition || 'None';
                     document.getElementById(s.hasSpiffsPartition ? 'fsOption' : 'fsUnavailable').style.display = '';
-                    if (s.canRollback) {
-                        document.getElementById(s.hasBackup ? 'rollbackBtn' : 'noBackupBtn').style.display = '';
-                    }
+                    applyBackup(s);
                     applyUploadState(s, true);
                     applyGate(s);
                 })
@@ -1040,9 +1102,7 @@ R"rawliteral(
             // Show appropriate confirmation dialog based on update type
             let confirmMessage = '';
             if (isFirmwareUpdate) {
-                confirmMessage = `
-
-WARNING: This will REBOOT the device!
+                confirmMessage = `WARNING: This will REBOOT the device!
 
 - The device will restart automatically
 - Real-time operations will be interrupted
@@ -1051,9 +1111,7 @@ WARNING: This will REBOOT the device!
 
 Continue with firmware update?`;
             } else {
-                confirmMessage = `
-
-This will NOT reboot the device!
+                confirmMessage = `This will NOT reboot the device!
 
 - Web interface files will be updated instantly
 - Device continues normal operation
@@ -1170,6 +1228,22 @@ void CustomOTA::handleUpdateComplete(AsyncWebServerRequest *request) {
         return request->requestAuthentication();
     }
 
+    if (request != _uploadRequest) {
+        // This request never owned the update, so it wrote nothing and must not touch the
+        // shared upload state
+        if (_updateInProgress) {
+            request->send(409, "text/plain", "Another upload is in progress - wait for it to finish");
+            return;
+        }
+        // No file part, or a stalled upload whose connection came back after handle()
+        // aborted it
+        _lastUploadFailed = true;
+        _updateStatus = F("Update failed: no complete file received");
+        request->send(400, "text/plain", _updateStatus);
+        return;
+    }
+    _uploadRequest = nullptr;
+
     if (_uploadBlocked) {
         _lastUploadFailed = true;
         request->send(409, "text/plain", _updateStatus);
@@ -1196,18 +1270,33 @@ void CustomOTA::handleUpdateComplete(AsyncWebServerRequest *request) {
 
 void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
     if (index == 0) {
+        // Authenticate before touching any upload state - the request handler only runs
+        // after the whole body (and therefore the whole update) has been processed
+        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
+            COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Unauthenticated upload rejected");
+            return; // Not the owner, so remaining chunks are ignored
+        }
+
+        // Another upload owns the update: leave it alone. This request's chunks are
+        // ignored and handleUpdateComplete() answers 409.
+        if (_updateInProgress) {
+            COTA_DEBUG_PRINTLN("CustomOTA: Upload refused - another upload is in progress");
+            return;
+        }
+
+        _uploadRequest = request;
+        // Forget the owner if its connection drops, so a later request that happens to
+        // get the same address is never mistaken for it
+        request->onDisconnect([this, request]() {
+            if (_uploadRequest == request) {
+                _uploadRequest = nullptr;
+            }
+        });
         _uploadError = false;
         _uploadComplete = false;
         _uploadBlocked = false;
-        _updateInProgress = false;
         _lastUploadFailed = false;
-
-        // Authenticate before writing anything - the request handler only runs after the
-        // whole body (and therefore the whole update) has been processed
-        if (_authenticated && !request->authenticate(_username.c_str(), _password.c_str())) {
-            COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Unauthenticated upload rejected");
-            return; // _updateInProgress stays false, so remaining chunks are ignored
-        }
+        _backupSlotWritten = false;
 
         if (_restartPending) {
             _updateStatus = F("Device is restarting - try again once it is back");
@@ -1273,7 +1362,10 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         COTA_DEBUG_PRINTF("CustomOTA: Update init complete - Type: %s\n", _updateType == 0 ? "firmware" : "filesystem");
     }
     
-    // Now proceed with normal upload handling
+    // Now proceed with normal upload handling - only for the request that owns the update
+    if (request != _uploadRequest) {
+        return;
+    }
     if (!_updateInProgress) {
         COTA_DEBUG_PRINTF("CustomOTA: DEBUG - Upload received but _updateInProgress=%s, index=%d, len=%d\n", 
                      _updateInProgress ? "true" : "false", index, len);
@@ -1360,6 +1452,17 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         size_t total = request->contentLength();
         if (total > 0) {
             _updateProgress = (int)min((size_t)100, (size_t)(((uint64_t)Update.progress() * 100) / total));
+        }
+
+        // Once data reaches flash the spare slot no longer holds the previous firmware, so
+        // don't offer a rollback to it. Update.progress() only counts data already written
+        // (a file refused at its first block leaves the slot, and this flag, untouched).
+        // A successful update records the new backup; after a reboot it is verified again.
+        if (_updateType == 0 && !_backupSlotWritten && Update.progress() > 0) {
+            _backupSlotWritten = true;
+            _backupGen++;            // a background check running now must not report a backup
+            _hasValidBackup = false;
+            COTA_DEBUG_PRINTLN("CustomOTA: Spare slot being overwritten - no backup until the update completes");
         }
 
         // HEAP OPTIMIZATION: Only update status string when progress changes
@@ -1504,6 +1607,12 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
     }
 #endif
 
+    // The background check is still reading the backup slot - don't race it
+    if (!_backupChecked) {
+        request->send(409, "text/plain", "Still checking the backup firmware - try again in a few seconds");
+        return;
+    }
+
     if (restoreFromBackup()) {
         request->send(200, "text/plain", "Rollback successful. Device will reboot to previous firmware in " + String(_restartDelay / 1000) + " seconds...");
         COTA_DEBUG_PRINTLN("CustomOTA: Rollback successful, scheduling restart");
@@ -1513,7 +1622,7 @@ void CustomOTA::handleRollback(AsyncWebServerRequest *request) {
     } else {
         String errorMsg = "Rollback failed. ";
         if (!_hasValidBackup) {
-            errorMsg += "No backup available. You need to perform at least one successful firmware update before rollback is possible.";
+            errorMsg += "No valid firmware in the backup slot - it is empty, or a failed upload overwrote it. A successful firmware update creates a new backup.";
         } else {
             errorMsg += "Unable to set boot partition for rollback.";
         }
@@ -1540,6 +1649,7 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         "\"progress\":%d,"
         "\"status\":\"%s\","
         "\"hasBackup\":%s,"
+        "\"backupChecked\":%s,"
         "\"freeHeap\":%zu,"
         "\"totalHeap\":%zu,"
         "\"heapPercent\":%zu,"
@@ -1562,6 +1672,7 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         _updateProgress,
         _updateStatus.c_str(),
         _hasValidBackup ? "true" : "false",
+        _backupChecked ? "true" : "false",
         freeHeap,
         totalHeap,
         heapPercent,
@@ -1595,11 +1706,8 @@ bool CustomOTA::createBackup() {
         COTA_DEBUG_PRINTF("CustomOTA: Running partition: %s, Other partition: %s\n", 
                           running->label, next->label);
         
-        // Check if the other partition contains firmware
-        uint32_t first_word = 0xFFFFFFFF;
-        esp_err_t err = esp_partition_read(next, 0, &first_word, sizeof(first_word));
-        
-        if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+        // Check if the other partition contains a complete, valid firmware image
+        if (isValidAppImage(next)) {
             COTA_DEBUG_PRINTLN("CustomOTA: Other partition contains firmware - backup available");
             _hasValidBackup = true;
             return true;
@@ -1717,14 +1825,12 @@ void CustomOTA::loadUpdateInfo() {
                              backupVersion.c_str(), backupPartition.c_str(), backupValid.c_str());
 
             if (backupVersion.length() > 0 && backupPartition.length() > 0 && backupValid == "YES") {
-                // Additional validation: ensure the backup partition exists and contains firmware
+                // Additional validation: ensure the backup partition exists, is not the one
+                // running (after a rollback the record names the running slot), and holds a
+                // complete, valid image
                 const esp_partition_t* backup_part = find_partition_by_label(backupPartition.c_str());
-                if (backup_part) {
-                    // Check if backup partition actually contains firmware
-                    uint32_t first_word = 0xFFFFFFFF;
-                    esp_err_t err = esp_partition_read(backup_part, 0, &first_word, sizeof(first_word));
-
-                    if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+                if (backup_part && backup_part != esp_ota_get_running_partition()) {
+                    if (isValidAppImage(backup_part)) {
                         _hasValidBackup = true;
                         _backupSize = _prefs.getUInt("backup_size", 0);
                         COTA_DEBUG_PRINTLN("CustomOTA: Valid backup found and verified");
@@ -1732,7 +1838,7 @@ void CustomOTA::loadUpdateInfo() {
                                          backupVersion.c_str(), backupPartition.c_str(), _backupSize);
                         return; // Exit early - we found a valid backup
                     } else {
-                        COTA_DEBUG_PRINTLN("CustomOTA: Backup partition exists but contains no firmware - clearing invalid metadata");
+                        COTA_DEBUG_PRINTLN("CustomOTA: Backup partition holds no valid firmware - clearing invalid metadata");
                         // Clear invalid backup metadata
                         _prefs.remove("backup_ver");
                         _prefs.remove("backup_part");
@@ -1740,7 +1846,7 @@ void CustomOTA::loadUpdateInfo() {
                         _prefs.remove("backup_size");
                     }
                 } else {
-                    COTA_DEBUG_PRINTLN("CustomOTA: Backup partition not found - clearing invalid metadata");
+                    COTA_DEBUG_PRINTLN("CustomOTA: Backup partition not found or now running - clearing metadata");
                     // Clear invalid backup metadata
                     _prefs.remove("backup_ver");
                     _prefs.remove("backup_part");
@@ -1782,11 +1888,8 @@ bool CustomOTA::autoDetectBackup() {
         return false;
     }
     
-    // Check if other partition has firmware (check first 4 bytes for ESP32 image header)
-    uint32_t first_word = 0xFFFFFFFF;
-    esp_err_t err = esp_partition_read(other, 0, &first_word, sizeof(first_word));
-    
-    if (err == ESP_OK && first_word != 0xFFFFFFFF) {
+    // Check the other partition holds a complete, valid firmware image
+    if (isValidAppImage(other)) {
         // Other partition has firmware - we have a backup!
         COTA_DEBUG_PRINTF("CustomOTA: Auto-detected backup firmware in %s partition\n", other->label);
         COTA_DEBUG_PRINTF("CustomOTA: Current partition: %s, Backup partition: %s\n", running->label, other->label);
@@ -1844,6 +1947,7 @@ void CustomOTA::handle() {
     unsigned long lastChunk = _lastChunkAt;
     if (_updateInProgress && (long)(millis() - lastChunk) >= (long)_uploadTimeout) {
         _updateInProgress = false;
+        _uploadRequest = nullptr; // A late chunk from the stalled connection is ignored
         if (Update.isRunning()) {
             Update.abort();
         }

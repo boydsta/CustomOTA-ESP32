@@ -5,22 +5,29 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.6.0] - 2026-10-26
+## [1.6.0] - 2026-10-28
 
 ### Fixed
 - **Dropped uploads no longer stay "in progress" until reboot.** A dropped connection (browser closed, phone left the WiFi) never delivers the final chunk, so `isUpdateInProgress()` stayed true and the `Update` session stayed open. The upload is now aborted after `setUploadTimeout()` (default 30 s) without data. The running firmware is untouched, because the boot partition is only switched after a complete upload.
+- **A second upload no longer breaks the one in progress.** Starting an upload used to abort the running one and restart the flash write, and the first upload's remaining data was appended to it, so both failed. An unauthenticated upload request reset the upload state the same way before its credentials were checked. Now only the request that started the upload can write to it: a second upload gets 409 "Another upload is in progress", and an unauthenticated one gets 401, without disturbing it.
+- **Rollback is no longer offered when the backup slot holds no valid firmware.** A failed firmware upload overwrites the backup slot, but `hasBackup` stayed true, so the OTA page offered a rollback that was then refused. Backup detection only looked at the first bytes of the slot, and a failed upload can leave a valid header there. `hasBackup` now clears as soon as an upload writes to the slot, and the backup is found by verifying the whole image (header, segments and checksum) the way the bootloader does. Because that reads the whole image, it runs in a low-priority background task 5 s after `begin()` (on the other core from `loop()` where there is one), so it doesn't slow start-up or interrupt the application.
 
 ### Added
 - `setUploadTimeout(unsigned long timeoutMs)` - how long an upload may go without data before it is aborted (default 30000 ms).
 - `isBusy()` - upload in progress or restart pending. Use it to hold off sleep or power-down.
+- `setBackupCheckDelay(unsigned long delayMs)` - when the background backup check runs after `begin()` (default 5000 ms). `isBackupChecked()` tells whether it has finished; `/update/status` reports it as `backupChecked`. Until then `hasBackup` is false and rollback requests get 409.
 - `/update/status` reports `lastUploadFailed`, true from a failed or stalled upload until the next upload starts.
 - OTA page shows the device's upload state on load and on its 5 s poll:
   - an upload it did not start (another browser, or one cut off before a reload): "An upload is in progress (43%) - wait for it to finish", with the progress bar, and Upload disabled;
   - the last failed upload, e.g. "Last upload failed: Upload stalled at 43% - not applied, running firmware unchanged. Safe to try again.";
-  - when a watched upload finishes, the page reloads once the device is back.
+  - when a watched upload finishes, the page reloads once the device is back;
+  - the Rollback button once the background backup check has finished.
+- `tools/ota_test.py` - tests a running device over HTTP: bad, stalled, dropped and concurrent uploads, authentication, the partition editor, install, reboot and rollback. Standard-library Python, not part of the published library.
 
 ### Changed
 - Upload is disabled while this page's own upload is running.
+- The upload confirmation dialogs are two lines shorter, so they fit without scrolling.
+- `setFirmwareVersion()` no longer re-reads the backup status, and `refreshBackupStatus()` now verifies the whole backup image (it blocks briefly) and does nothing while the background check is running.
 
 ## [1.5.0] - 2026-10-23
 

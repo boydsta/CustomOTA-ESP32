@@ -38,7 +38,8 @@ import sys
 import time
 
 ESP_IMAGE_MAGIC = 0xE9
-PARTITION_TABLE_SIZE = 0xC00
+PARTITION_TABLE_MAX_LEN = 0xC00   # partitions.bin as PlatformIO builds it
+PARTITION_TABLE_SIZE = 0x1000     # the flash sector holding it - the device's upload limit
 
 RESULT_COLOURS = {"PASS": "\033[32m", "FAIL": "\033[31m", "WARN": "\033[33m", "SKIP": "\033[90m"}
 
@@ -304,33 +305,50 @@ class Tester:
         t0 = time.time()
         while True:
             s = self.wait_online()
-            if not s["inProgress"] and not s["restartPending"]:
+            if not s["inProgress"] and not s["restartPending"] and s.get("backupChecked", True):
                 return s
             if time.time() - t0 > limit:
                 raise Fail(f"device still busy after {limit} s: {s['status']}")
             time.sleep(1)
 
     def wait_until(self, cond, timeout):
+        """Poll status until cond(s). A slow or dropped status request is retried."""
         t0 = time.time()
         while time.time() - t0 < timeout:
-            s = self.dev.status(timeout=3)
+            try:
+                s = self.dev.status(timeout=5)
+            except (OSError, http.client.HTTPException):
+                time.sleep(0.5)
+                continue
             if cond(s):
                 return s, time.time() - t0
             time.sleep(0.5)
         raise Fail(f"condition not reached within {timeout} s")
 
-    def wait_restart(self, timeout=90):
+    def wait_restart(self, timeout=90, expect_partition=None, settle=True):
+        """Wait for the device to go down and come back. With expect_partition, also done
+        as soon as it reports running that partition (in case the restart was missed).
+        With settle, then waits for the background backup check (1.6+) to finish."""
         t0 = time.time()
         down = False
+        s = None
         while time.time() - t0 < timeout:
             try:
                 s = self.dev.status(timeout=2)
                 if down:
-                    return s
+                    break
+                if (expect_partition and s["runningPartition"] == expect_partition
+                        and not s["restartPending"]):
+                    break
+                s = None
             except (OSError, http.client.HTTPException):
                 down = True
             time.sleep(0.5)
-        raise Fail(f"device did not restart and come back within {timeout} s")
+        if s is None:
+            raise Fail(f"device did not restart and come back within {timeout} s")
+        if settle and not s.get("backupChecked", True):
+            s, _ = self.wait_until(lambda st: st.get("backupChecked", True), 60)
+        return s
 
     def unchanged(self, before, after):
         check(after["runningPartition"] == before["runningPartition"],
@@ -355,7 +373,7 @@ class Tester:
             return s
         code, text = self.dev.post("/update/rollback")
         check(code == 200, f"rollback returned {code}: {text}")
-        s = self.wait_restart()
+        s = self.wait_restart(expect_partition=partition)
         check(s["runningPartition"] == partition,
               f"after rollback running {s['runningPartition']}, expected {partition}")
         return s
@@ -412,9 +430,9 @@ class Tester:
         def upload(data, filename="partitions.bin"):
             return Upload(self.dev, data, path="/update/partitions", filename=filename).finish(30)
 
-        code, text = upload(bytes(random.getrandbits(8) for _ in range(PARTITION_TABLE_SIZE)))
+        code, text = upload(bytes(random.getrandbits(8) for _ in range(PARTITION_TABLE_MAX_LEN)))
         check(code == 400, f"random bytes as a partition table returned {code}: {text}")
-        code, text = upload(self.fw[:4096], "firmware.bin")
+        code, text = upload(self.fw[:PARTITION_TABLE_SIZE + 1], "firmware.bin")
         check(code == 400 and "too big" in text, f"oversized file returned {code}: {text}")
         code, text = self.dev.post("/update/partitions/apply")
         check(code == 400, f"apply with nothing uploaded returned {code}: {text}")
@@ -446,20 +464,26 @@ class Tester:
         return text
 
     def t_garbage(self):
+        before = self.idle()
         _, text, after = self.expect_refused(self.garbage, (500,))
         check(after["lastUploadFailed"], "lastUploadFailed not set")
+        # Refused at its first block, before anything was erased: the backup is still there
+        check(after["hasBackup"] == before["hasBackup"],
+              f"hasBackup changed from {before['hasBackup']} to {after['hasBackup']} though nothing was written")
         return text
 
     def t_truncated(self):
         _, text, after = self.expect_refused(self.truncated, (500,))
         self.backup_damaged = True
         check(after["lastUploadFailed"], "lastUploadFailed not set")
+        check(not after["hasBackup"], "hasBackup still true after a failed upload overwrote the spare slot")
         return text
 
     def t_corrupt(self):
         _, text, after = self.expect_refused(self.corrupt, (500,))
         self.backup_damaged = True
         check(after["lastUploadFailed"], "lastUploadFailed not set")
+        check(not after["hasBackup"], "hasBackup still true after a failed upload overwrote the spare slot")
         return text
 
     def t_rollback_refused(self):
@@ -474,9 +498,8 @@ class Tester:
             raise Fail("rollback accepted a damaged image and restarted")
         check(code == 400, f"rollback returned {code}: {text}")
         self.unchanged(before, self.dev.status())
-        if before["hasBackup"]:
-            raise Warn("refused correctly, but status still reports hasBackup=true after a failed "
-                       "upload overwrote the spare slot, so the page offers a rollback that will fail")
+        check(not before["hasBackup"], "refused correctly, but status still reports hasBackup=true after a "
+              "failed upload overwrote the spare slot, so the page offers a rollback that will fail")
         return text
 
     def _start_partial(self, data, fraction):
@@ -643,7 +666,7 @@ class Tester:
             except (OSError, Fail) as e:
                 self.record("upload_while_restarting", "WARN", f"device restarted before it answered ({e})")
 
-        after = self.wait_restart()
+        after = self.wait_restart(expect_partition=before["backupPartition"])
         check(after["runningPartition"] == before["backupPartition"],
               f"booted {after['runningPartition']}, expected {before['backupPartition']}")
         check(not after["lastUploadFailed"], "lastUploadFailed set after a good upload")
@@ -660,10 +683,25 @@ class Tester:
         code, text = self.dev.post("/update/reboot")
         check(code == 200, f"reboot returned {code}: {text}")
         self.restarted = True
-        after = self.wait_restart()
+        after = self.wait_restart(settle=False)
         check(after["runningPartition"] == before["runningPartition"],
               f"came back on {after['runningPartition']}, expected {before['runningPartition']}")
-        return f"back on {after['runningPartition']}"
+
+        # Straight after boot the backup slot is still being checked: rollback must wait
+        if after.get("backupChecked", True):
+            self.record("rollback_while_checking", "SKIP", "backup check had already finished when the device came back")
+        else:
+            code, text = self.dev.post("/update/rollback")
+            if code == 200:
+                self.wait_restart()
+                self.record("rollback_while_checking", "FAIL", "rollback accepted before the backup check finished")
+            elif code == 409:
+                self.record("rollback_while_checking", "PASS", text)
+            else:
+                self.record("rollback_while_checking", "FAIL", f"returned {code}: {text}")
+        settled, waited = self.wait_until(lambda s: s.get("backupChecked", True), 60)
+        return (f"back on {after['runningPartition']}; backup check finished, hasBackup="
+                f"{settled['hasBackup']}")
 
     def t_rollback(self):
         before = self.idle()
@@ -680,20 +718,39 @@ class Tester:
             self.rollback_to(self.original["runningPartition"])
             before = self.idle()
         check(before["canRollback"], "device has no second OTA slot")
-        # First upload is the good image, the second one damaged within the part it sends
+        # First upload is the good image, the second one damaged within the part it sends.
+        # The web server closes an upload connection idle for 3 s, so both keep sending:
+        # whichever is not the main one trickles 1 KB per 16 KB of the other.
         first = Upload(self.dev, self.fw)
         second = None
+        second_open = True
+
+        def trickle(u, cap):
+            nonlocal second_open
+            if u is second and not second_open:
+                return
+            try:
+                u._send(min(u.sent + 1024, cap))
+            except OSError:
+                if u is second:
+                    second_open = False
+                else:
+                    raise
+
         try:
             first.send_to(0.3)
-            time.sleep(1)
+            # Send the whole second upload while the first is still running: it should be
+            # refused with 409 and the first one carry on
             second = Upload(self.dev, self.corrupt_early)
-            second.send_to(0.3)
-            time.sleep(1)
-            code1, text1 = first.finish()
+            first_cap = int(len(first.body) * 0.6)
+            while second.sent < len(second.body):
+                second._send(min(second.sent + 16384, len(second.body)))
+                trickle(first, first_cap)
             try:
-                code2, text2 = second.finish(30)
+                code2, text2 = second.response(30)
             except (OSError, Fail) as e:
                 code2, text2 = 0, str(e)
+            code1, text1 = first.finish()
         finally:
             first.close()
             if second:
@@ -701,14 +758,14 @@ class Tester:
 
         if code1 == 200:
             self.restarted = True
-            after = self.wait_restart()
+            after = self.wait_restart(expect_partition=before["backupPartition"])
             check(after["runningPartition"] == before["backupPartition"], "first upload did not boot")
-            return f"first upload completed; second got {code2}: {text2}"
+            check(code2 == 409, f"first upload completed, but the second got {code2} instead of 409: {text2}")
+            return f"second upload refused with 409 ({text2}); first completed and booted"
         after = self.idle()
         self.unchanged(before, after)
         raise Fail(f"starting a second upload broke the first (first got {code1}: {text1}; second got "
-                   f"{code2}: {text2}). The second upload restarted the flash write and the first "
-                   f"one's data was appended to it; the image check stopped the result from booting.")
+                   f"{code2}: {text2}). The image check stopped the result from booting.")
 
     def t_soak(self):
         n = self.args.soak
@@ -740,7 +797,8 @@ class Tester:
     # --- run ------------------------------------------------------------------
 
     def setup(self):
-        s = self.wait_online(10)
+        self.wait_online(10)
+        s = self.idle()   # also waits for a just-booted device's backup check
         self.original = s
         code, headers, body = self.dev.request("GET", "/update", auth=False)
         self.auth_required = code == 401

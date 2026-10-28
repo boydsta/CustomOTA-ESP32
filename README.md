@@ -10,6 +10,8 @@ ESP32 Over-The-Air firmware update library with dual partition backup system, fi
 - **Dropped uploads recover on their own** - If the connection drops mid-upload, the upload is aborted after 30 s without data (`setUploadTimeout()`). Before, it stayed "in progress" until the device rebooted. The running firmware is never touched by a partial upload.
 - **The page tells you whether to wait or retry** - On load it shows an upload still running from another browser ("in progress 43% - wait"), or the last failed one ("stalled at 43% - not applied, safe to try again").
 - **`isBusy()`** - True while an upload is running or a restart is pending, for example to hold off deep sleep. See [Sleep and Power-Down](#sleep-and-power-down).
+- **Uploads can't disturb each other** - A second upload while one is running gets 409, and an unauthenticated one gets 401. Before, either could break the upload in progress.
+- **Rollback is only offered when it will work** - The backup slot is verified in full (header, segments, checksum), and a failed upload that overwrote it clears the backup. The check runs in a low-priority background task 5 s after `begin()` (`setBackupCheckDelay()`), so it doesn't slow start-up.
 
 ## What's New in v1.5.0
 
@@ -166,6 +168,7 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 ### Advanced Configuration Methods
 - `setRestartDelay(unsigned long delayMs)` - Delay between replying to the browser and restarting, after a firmware update, reboot or rollback (default: 3000ms)
 - `setUploadTimeout(unsigned long timeoutMs)` - Abort an upload when no data has arrived for this long, e.g. after a dropped connection (default: 30000ms)
+- `setBackupCheckDelay(unsigned long delayMs)` - When to verify the backup slot after `begin()` (default: 5000ms). Runs in a low-priority background task; until it finishes there is no rollback. Call before `begin()`
 - `setSpiffsFormatOnFailure(bool allowFormat)` - Control automatic SPIFFS formatting on mount failure (default: true)
 - `setBuildTimestamp(const char* timestamp)` - Override the build timestamp (by default PlatformIO builds set it automatically via `build_timestamp.py`)
 - `setUpdateAllowed(bool allowed, const char* reason = nullptr)` - Allow or block updates, reboot, rollback and partition changes (default: allowed). Call it from `loop()` with your own "safe to restart" condition. See [Blocking Updates While Unsafe](#blocking-updates-while-unsafe)
@@ -178,6 +181,7 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 - `shouldRestart()` - Check if device should restart (for deferred restart handling). Always false while updates are blocked
 - `isRestartPending()` - A restart has been scheduled (after an update, reboot, rollback or partition change), including one held by the update gate
 - `isUpdateAllowed()` - Current state of the update gate
+- `isBackupChecked()` - The background backup check has finished
 
 ### Static Information Methods
 - `CustomOTA::getLibraryVersion()` - Get library version string
@@ -285,6 +289,19 @@ if (idleLongEnough() && !ota.isBusy()) {
 ```
 
 `isBusy()` clears by itself: a stalled upload is aborted after `setUploadTimeout()`, and a finished firmware upload restarts the device. The exception is a restart held by `setUpdateAllowed(false)`, which waits until updates are allowed again. If your sleep condition and your gate condition can both be true at once, also cap the hold with your own timer.
+
+## Testing a Device
+
+[tools/ota_test.py](tools/ota_test.py) tests a running device over HTTP. It needs only Python 3.8+ and is not part of the published library.
+
+```bash
+python tools/ota_test.py --host 192.168.1.50 --firmware .pio/build/<env>/firmware.bin
+python tools/ota_test.py --list    # all tests
+```
+
+It sends garbage, truncated, corrupt, stalled, dropped and concurrent uploads, checks authentication (`--user`, `--password`) and the partition editor (`--partitions`), then installs `--firmware`, reboots and rolls back. The failure tests only send damaged images, which ESP-IDF refuses to boot. The run ends back on the firmware the device started with, and it never applies a partition table. `--no-restart` skips the tests that restart the device. `--soak N`, `--gate` (interactive) and `--fs` (replaces the SPIFFS contents) are opt-in. `--upload-timeout` must match the device's `setUploadTimeout()`.
+
+v1.6.0 passes all tests on an ESP32 (Arduino 3.x) with authentication and the partition editor enabled.
 
 ## Changing the Partition Table Over the Air
 

@@ -27,6 +27,11 @@
  *   - OTA page shows uploads it did not start (another browser, or one cut off before a
  *     reload) and the last failed upload, so it is clear whether to wait or try again
  *   - isBusy(): upload in progress or restart pending - e.g. hold off sleep while true
+ *   - A second upload (or an unauthenticated one) no longer disturbs an upload in progress:
+ *     it gets 409 (or 401) and the running upload continues
+ *   - hasBackup is only true when the backup slot holds a complete, verified image, so
+ *     rollback is not offered after a failed upload has overwritten it. The check runs in a
+ *     low-priority background task setBackupCheckDelay() after begin() (default 5 s)
  *
  * v1.5.0 (October 2026):
  *   - Update gate: setUpdateAllowed(allowed, reason) lets the application block updates,
@@ -169,9 +174,18 @@ private:
     String _hardwareID;
     String _buildTimestamp;
     
-    // Rollback support
-    bool _hasValidBackup;
+    // Rollback support. Set by the background backup check and cleared by the upload handler
+    // (AsyncTCP task), read by the web handlers, hence volatile.
+    volatile bool _hasValidBackup;
     size_t _backupSize;
+
+    // Backup check: verifying the backup slot reads the whole image, so it runs in a
+    // low-priority background task _backupCheckDelay after begin() instead of holding it up
+    volatile bool _backupChecked;      // background check has finished
+    volatile uint32_t _backupGen;      // bumped when an upload starts writing the backup slot
+    bool _backupSlotWritten;           // the current upload has written to the backup slot
+    unsigned long _backupCheckDelay;
+    static void backupCheckTask(void* arg);
     
     // Update status
     String _updateStatus;
@@ -185,6 +199,10 @@ private:
     bool _uploadComplete;
     int _lastReportedProgress;
     bool _lastUploadFailed; // Shown by the OTA page on load, until the next upload starts
+    // The request that owns the current upload. Chunks from any other request are ignored,
+    // so a second upload (or an unauthenticated one) can't disturb it. Only ever compared,
+    // never dereferenced - cleared when the owner disconnects, finishes or stalls.
+    AsyncWebServerRequest* _uploadRequest;
 
     // Stalled upload detection - a dropped connection never delivers the final chunk
     volatile unsigned long _lastChunkAt; // millis() when the last upload chunk arrived
@@ -254,6 +272,13 @@ public:
     void setUploadTimeout(unsigned long timeoutMs); // Abort an upload when no data arrives for this long (default: 30000ms)
     void setSpiffsFormatOnFailure(bool allowFormat); // Control SPIFFS formatting behavior on mount failure
 
+    // How long after begin() the backup slot is checked (default 5000 ms). The check reads
+    // the whole backup image in a low-priority background task, so it never holds up
+    // setup() or loop(). Until it finishes, hasBackup is false and rollback requests get
+    // 409. Call before begin().
+    void setBackupCheckDelay(unsigned long delayMs);
+    bool isBackupChecked() { return _backupChecked; }
+
     // Allow or block updates, reboot, rollback and partition changes (default: allowed).
     // While blocked: new requests get 409 + reason, an upload in progress is aborted at its
     // next chunk (the running firmware is untouched), and a restart that is already
@@ -278,7 +303,9 @@ public:
     static bool supportsRealtimeOperations() { return CUSTOMOTA_SUPPORT_REALTIME_OPERATIONS; }
     static bool supportsPartitionEditor() { return CUSTOMOTA_SUPPORT_PARTITION_EDITOR; }
     
-    // Call this after setFirmwareVersion to refresh backup status
+    // Check the backup slot again now. Reads the whole backup image, so it blocks for a
+    // moment - call it outside time-critical code. Does nothing while the background check
+    // started by begin() is still running.
     void refreshBackupStatus();
     
     // REAL-TIME CRITICAL: This function must be called in main loop
