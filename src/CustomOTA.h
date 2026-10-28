@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.5.0
+ * Version: 1.6.0
  *
  * Author: Boyd Benton
  * Created: 2025
@@ -21,6 +21,13 @@
  * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.6.0 (October 2026):
+ *   - Stalled uploads: an upload that stops sending data (connection dropped) is aborted
+ *     after setUploadTimeout() (default 30 s). Before, it stayed "in progress" until reboot.
+ *   - OTA page shows uploads it did not start (another browser, or one cut off before a
+ *     reload) and the last failed upload, so it is clear whether to wait or try again
+ *   - isBusy(): upload in progress or restart pending - e.g. hold off sleep while true
+ *
  * v1.5.0 (October 2026):
  *   - Update gate: setUpdateAllowed(allowed, reason) lets the application block updates,
  *     reboot, rollback and partition changes while it is not safe to restart (e.g. a
@@ -109,9 +116,9 @@
 
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
-#define CUSTOMOTA_VERSION_MINOR 5
+#define CUSTOMOTA_VERSION_MINOR 6
 #define CUSTOMOTA_VERSION_PATCH 0
-#define CUSTOMOTA_VERSION_STRING "1.5.0"
+#define CUSTOMOTA_VERSION_STRING "1.6.0"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 
@@ -169,13 +176,19 @@ private:
     // Update status
     String _updateStatus;
     int _updateProgress;
-    bool _updateInProgress;
+    // Set by the upload handler (AsyncTCP task), cleared by handle() on a stall, hence volatile
+    volatile bool _updateInProgress;
     int _updateType; // 0 = firmware, 1 = filesystem
-    
+
     // Upload result, reported by handleUpdateComplete() once the body has been received
     bool _uploadError;
     bool _uploadComplete;
     int _lastReportedProgress;
+    bool _lastUploadFailed; // Shown by the OTA page on load, until the next upload starts
+
+    // Stalled upload detection - a dropped connection never delivers the final chunk
+    volatile unsigned long _lastChunkAt; // millis() when the last upload chunk arrived
+    unsigned long _uploadTimeout;        // Abort an upload after this long without data
 
     // Restart management for real-time systems
     bool _restartPending;
@@ -238,6 +251,7 @@ public:
     void setHardwareID(const char* id);
     void setBuildTimestamp(const char* timestamp);
     void setRestartDelay(unsigned long delayMs); // Set restart delay for firmware updates
+    void setUploadTimeout(unsigned long timeoutMs); // Abort an upload when no data arrives for this long (default: 30000ms)
     void setSpiffsFormatOnFailure(bool allowFormat); // Control SPIFFS formatting behavior on mount failure
 
     // Allow or block updates, reboot, rollback and partition changes (default: allowed).
@@ -276,6 +290,10 @@ public:
     String getUpdateStatus() { return _updateStatus; }
     int getUpdateProgress() { return _updateProgress; }
     bool isRestartPending() { return _restartPending; }
+    // Upload in progress or restart scheduled - don't sleep or power down while true.
+    // A stalled upload clears after setUploadTimeout(), so this can't stay true forever
+    // unless a restart is held by setUpdateAllowed(false).
+    bool isBusy() { return _updateInProgress || _restartPending; }
     // A held restart (updates blocked) only runs once updates are allowed again
     bool shouldRestart() { return _updateAllowed && _restartPending && (millis() - _restartRequestedAt >= _restartDelay); }
     

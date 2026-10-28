@@ -124,6 +124,9 @@ CustomOTA::CustomOTA() {
     _uploadError = false;
     _uploadComplete = false;
     _lastReportedProgress = -1;
+    _lastUploadFailed = false;
+    _lastChunkAt = 0;
+    _uploadTimeout = 30000; // Default 30 seconds without data
     _server = nullptr;
     _restartPending = false;
     _restartRequestedAt = 0;
@@ -332,6 +335,11 @@ void CustomOTA::setBuildTimestamp(const char* timestamp) {
 void CustomOTA::setRestartDelay(unsigned long delayMs) {
     _restartDelay = delayMs;
     COTA_DEBUG_PRINTF("CustomOTA: Restart delay set to %lu ms\n", delayMs);
+}
+
+void CustomOTA::setUploadTimeout(unsigned long timeoutMs) {
+    _uploadTimeout = timeoutMs;
+    COTA_DEBUG_PRINTF("CustomOTA: Upload timeout set to %lu ms\n", timeoutMs);
 }
 
 void CustomOTA::setSpiffsFormatOnFailure(bool allowFormat) {
@@ -874,6 +882,35 @@ R"rawliteral(
         let cotaSelectedFile = null;
         let cotaUpdateType = 'firmware';
         let cotaUpdateBlocked = false;
+        let cotaUploading = false;    // This page is uploading - its own XHR reports progress
+        let cotaRemoteUpload = false; // Device reports an upload this page did not start
+
+        // Uploads this page did not start (another browser, or one cut off before a reload)
+        // and the last failed upload, so it is clear whether to wait or try again.
+        // The failure is shown on load and when a watched upload ends, not on every poll,
+        // so it doesn't keep overwriting the page's own messages.
+        function applyUploadState(s, onLoad) {
+            if (cotaUploading) return;
+            const container = document.getElementById('progressContainer');
+            if (s.inProgress) {
+                cotaRemoteUpload = true;
+                container.style.display = 'block';
+                updateProgress(s.progress);
+                showStatus('An upload is in progress (' + s.progress + '%) - wait for it to finish', 'info');
+            } else if (onLoad || cotaRemoteUpload) {
+                const watched = cotaRemoteUpload;
+                cotaRemoteUpload = false;
+                container.style.display = 'none';
+                if (s.lastUploadFailed) {
+                    showStatus('Last upload failed: ' + s.status, 'error');
+                } else if (watched) {
+                    // Finished on the device: reload to show the new version
+                    showStatus(s.status, 'success');
+                    if (s.restartPending) reloadWhenRestarted();
+                    else setTimeout(() => window.location.reload(), 3000);
+                }
+            }
+        }
 
         // Update gate (setUpdateAllowed): show the reason and grey out the buttons while
         // blocked. The device refuses blocked requests anyway - this just says why up front.
@@ -882,7 +919,7 @@ R"rawliteral(
             const msg = document.getElementById('blockedMessage');
             msg.textContent = cotaUpdateBlocked ? 'Updates blocked: ' + (s.blockedReason || 'disabled by the application') : '';
             msg.style.display = cotaUpdateBlocked ? 'block' : 'none';
-            document.getElementById('uploadBtn').disabled = cotaUpdateBlocked || !cotaSelectedFile;
+            document.getElementById('uploadBtn').disabled = cotaUpdateBlocked || cotaRemoteUpload || cotaUploading || !cotaSelectedFile;
             ['rebootBtn', 'rollbackBtn', 'ptApplyBtn'].forEach(id => {
                 const b = document.getElementById(id);
                 if (b && cotaUpdateBlocked) b.disabled = true;
@@ -890,11 +927,12 @@ R"rawliteral(
             });
         }
 
-        // The gate can change while the page is open (e.g. key turned on), so keep checking
+        // The gate and upload state can change while the page is open (e.g. key turned on,
+        // or an upload from another browser), so keep checking
         function pollGate() {
             fetch('/update/status', { cache: 'no-store' })
                 .then(r => r.json())
-                .then(applyGate)
+                .then(s => { applyUploadState(s, false); applyGate(s); })
                 .catch(() => {})
                 .finally(() => setTimeout(pollGate, 5000));
         }
@@ -917,6 +955,7 @@ R"rawliteral(
                     if (s.canRollback) {
                         document.getElementById(s.hasBackup ? 'rollbackBtn' : 'noBackupBtn').style.display = '';
                     }
+                    applyUploadState(s, true);
                     applyGate(s);
                 })
                 .catch(() => showStatus('Could not load device information', 'error'))
@@ -967,7 +1006,7 @@ R"rawliteral(
             if (cotaFile && cotaFile.name && cotaFile.name.toLowerCase().endsWith('.bin')) {
                 cotaSelectedFile = cotaFile;
                 const uploadBtn = document.getElementById('uploadBtn');
-                if (uploadBtn) uploadBtn.disabled = cotaUpdateBlocked;
+                if (uploadBtn) uploadBtn.disabled = cotaUpdateBlocked || cotaRemoteUpload;
                 showStatus('File selected: ' + cotaFile.name + ' (' + cotaUpdateType + ' update)', 'info');
             } else {
                 showStatus('Please select a valid .bin file', 'error');
@@ -1044,6 +1083,7 @@ Continue with filesystem update?`;
             
             // The device answers before it restarts, so the HTTP status is the real result
             cotaXhr.onload = function() {
+                cotaUploading = false;
                 document.getElementById('progressContainer').style.display = 'none';
                 if (cotaXhr.status >= 200 && cotaXhr.status < 300) {
                     showStatus(cotaXhr.responseText, 'success');
@@ -1057,16 +1097,20 @@ Continue with filesystem update?`;
                 }
             };
 
+            cotaUploading = true;
+            document.getElementById('uploadBtn').disabled = true;
             document.getElementById('progressContainer').style.display = 'block';
             updateProgress(0);
             showStatus('Uploading ' + cotaUpdateType + '...', 'info');
 
             cotaXhr.onerror = function() {
+                cotaUploading = false;
                 document.getElementById('progressContainer').style.display = 'none';
                 showStatus('Upload failed: network connection lost', 'error');
             };
 
             cotaXhr.ontimeout = function() {
+                cotaUploading = false;
                 document.getElementById('progressContainer').style.display = 'none';
                 showStatus('Upload failed: request timed out', 'error');
             };
@@ -1127,17 +1171,21 @@ void CustomOTA::handleUpdateComplete(AsyncWebServerRequest *request) {
     }
 
     if (_uploadBlocked) {
+        _lastUploadFailed = true;
         request->send(409, "text/plain", _updateStatus);
     } else if (_uploadError) {
+        _lastUploadFailed = true;
         request->send(500, "text/plain", _updateStatus);
     } else if (_uploadComplete) {
         request->send(200, "text/plain", _updateStatus);
     } else {
-        // No file part, or the body ended before the final chunk
+        // No file part, the body ended before the final chunk, or a stalled upload whose
+        // connection came back after handle() aborted it
         if (Update.isRunning()) {
             Update.abort();
         }
         _updateInProgress = false;
+        _lastUploadFailed = true;
         _updateStatus = F("Update failed: no complete file received");
         request->send(400, "text/plain", _updateStatus);
     }
@@ -1152,6 +1200,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         _uploadComplete = false;
         _uploadBlocked = false;
         _updateInProgress = false;
+        _lastUploadFailed = false;
 
         // Authenticate before writing anything - the request handler only runs after the
         // whole body (and therefore the whole update) has been processed
@@ -1207,7 +1256,9 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
             COTA_DEBUG_PRINTLN("CustomOTA: No type parameter found, defaulting to firmware");
         }
         
-        // Initialize update state immediately
+        // Initialize update state immediately. Timestamp first, so handle() never sees
+        // an upload in progress with an old timestamp and aborts it as stalled.
+        _lastChunkAt = millis();
         _updateInProgress = true;
         _updateProgress = 0;
         _lastReportedProgress = -1;
@@ -1229,6 +1280,7 @@ void CustomOTA::handleUpdateUpload(AsyncWebServerRequest *request, String filena
         COTA_DEBUG_PRINTLN("CustomOTA: ERROR - Upload received but no update in progress");
         return; // Skip this chunk
     }
+    _lastChunkAt = millis(); // Still receiving - not stalled
 
     // Gate closed mid-upload: abort before writing more. The boot partition is only
     // switched after a complete upload, so the running firmware is untouched.
@@ -1484,6 +1536,7 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
     snprintf(jsonBuffer, sizeof(jsonBuffer),
         "{"
         "\"inProgress\":%s,"
+        "\"lastUploadFailed\":%s,"
         "\"progress\":%d,"
         "\"status\":\"%s\","
         "\"hasBackup\":%s,"
@@ -1505,6 +1558,7 @@ void CustomOTA::handleStatus(AsyncWebServerRequest *request) {
         "\"libraryVersion\":\"" CUSTOMOTA_VERSION_STRING "\""
         "}",
         _updateInProgress ? "true" : "false",
+        _lastUploadFailed ? "true" : "false",
         _updateProgress,
         _updateStatus.c_str(),
         _hasValidBackup ? "true" : "false",
@@ -1778,7 +1832,32 @@ void CustomOTA::handle() {
     // REAL-TIME CRITICAL MAIN LOOP FUNCTION: NO delay() calls allowed!
     // This function is called every loop iteration and must be non-blocking
     // Any blocking operations will interfere with real-time device operations
-    
+
+    // A dropped connection never delivers the final chunk or calls handleUpdateComplete(),
+    // so the upload would stay "in progress" until reboot. Abort it once no data has
+    // arrived for _uploadTimeout. Clear the flag first so a late chunk is ignored. The boot
+    // partition is only switched after a complete upload, so the running firmware is safe.
+    // The upload handler runs on the AsyncTCP task and updates _lastChunkAt while this runs.
+    // Read it before millis(), and compare signed: if millis() were read first, a chunk
+    // landing in between makes _lastChunkAt newer than "now", the unsigned subtraction
+    // wraps, and an active upload is aborted as stalled.
+    unsigned long lastChunk = _lastChunkAt;
+    if (_updateInProgress && (long)(millis() - lastChunk) >= (long)_uploadTimeout) {
+        _updateInProgress = false;
+        if (Update.isRunning()) {
+            Update.abort();
+        }
+        _lastUploadFailed = true;
+        char msg[128];
+        if (_updateType == 0) {
+            snprintf(msg, sizeof(msg), "Upload stalled at %d%% - not applied, running firmware unchanged. Safe to try again.", _updateProgress);
+        } else {
+            snprintf(msg, sizeof(msg), "Upload stalled at %d%% - filesystem image incomplete. Upload it again.", _updateProgress);
+        }
+        _updateStatus = msg;
+        COTA_DEBUG_PRINTF("CustomOTA: Upload stalled - no data for %lu ms, aborted\n", _uploadTimeout);
+    }
+
     // Check for pending restart using non-blocking timing
     checkRestart();
     

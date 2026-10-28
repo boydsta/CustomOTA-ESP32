@@ -1,9 +1,15 @@
-# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.5.0-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.6.0-blue.svg)
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and a web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+## What's New in v1.6.0
+
+- **Dropped uploads recover on their own** - If the connection drops mid-upload, the upload is aborted after 30 s without data (`setUploadTimeout()`). Before, it stayed "in progress" until the device rebooted. The running firmware is never touched by a partial upload.
+- **The page tells you whether to wait or retry** - On load it shows an upload still running from another browser ("in progress 43% - wait"), or the last failed one ("stalled at 43% - not applied, safe to try again").
+- **`isBusy()`** - True while an upload is running or a restart is pending, for example to hold off deep sleep. See [Sleep and Power-Down](#sleep-and-power-down).
 
 ## What's New in v1.5.0
 
@@ -38,7 +44,7 @@ lib_deps =
 
 An unpinned URL always gets the latest `main`. For production builds, pin a release tag so a library update never changes your firmware unexpectedly:
 ```ini
-    https://github.com/boydsta/CustomOTA-ESP32.git#v1.5.0
+    https://github.com/boydsta/CustomOTA-ESP32.git#v1.6.0
 ```
 
 ### Staying on v1.3
@@ -140,6 +146,9 @@ ota.setCredentials("admin", "password123");
 // Configure restart delay (default: 3000ms)
 ota.setRestartDelay(5000); // 5 seconds
 
+// Abort an upload that stops sending data (default: 30000ms)
+ota.setUploadTimeout(20000); // 20 seconds
+
 // Control SPIFFS formatting behavior (default: true)
 ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 ```
@@ -156,12 +165,14 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 
 ### Advanced Configuration Methods
 - `setRestartDelay(unsigned long delayMs)` - Delay between replying to the browser and restarting, after a firmware update, reboot or rollback (default: 3000ms)
+- `setUploadTimeout(unsigned long timeoutMs)` - Abort an upload when no data has arrived for this long, e.g. after a dropped connection (default: 30000ms)
 - `setSpiffsFormatOnFailure(bool allowFormat)` - Control automatic SPIFFS formatting on mount failure (default: true)
 - `setBuildTimestamp(const char* timestamp)` - Override the build timestamp (by default PlatformIO builds set it automatically via `build_timestamp.py`)
 - `setUpdateAllowed(bool allowed, const char* reason = nullptr)` - Allow or block updates, reboot, rollback and partition changes (default: allowed). Call it from `loop()` with your own "safe to restart" condition. See [Blocking Updates While Unsafe](#blocking-updates-while-unsafe)
 
 ### Status Methods
-- `isUpdateInProgress()` - Check if update is in progress
+- `isUpdateInProgress()` - Check if update is in progress. Clears after `setUploadTimeout()` if the upload stops sending data
+- `isBusy()` - Upload in progress or restart pending. Hold off sleep or power-down while true
 - `getUpdateStatus()` - Get current update status string
 - `getUpdateProgress()` - Get update progress percentage (0-100)
 - `shouldRestart()` - Check if device should restart (for deferred restart handling). Always false while updates are blocked
@@ -201,7 +212,7 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 |---|---|---|
 | `/update` | GET | OTA web page |
 | `/update` | POST | Upload firmware or filesystem image (multipart, `type=firmware` or `filesystem`) |
-| `/update/status` | GET | JSON status: progress, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending`, `updateAllowed`, `blockedReason`, `libraryVersion` |
+| `/update/status` | GET | JSON status: `inProgress`, `progress`, `status`, `lastUploadFailed`, heap, version, build date, hardware ID, partitions, `canRollback`, `restartPending`, `updateAllowed`, `blockedReason`, `libraryVersion` |
 | `/update/reboot` | POST | Restart the device |
 | `/update/rollback` | POST | Boot the previous firmware |
 | `/update/partitions` | GET | JSON: current partition table, running slot, pending table with its check errors/warnings (partition editor only) |
@@ -246,8 +257,34 @@ Notes:
 - **Default is allowed.** Only applications that call `setUpdateAllowed()` are affected.
 - **`reason` must be a static string** (a string literal or a global), because the library keeps the pointer. It must not contain double quotes or backslashes, because it is sent as-is in the `/update/status` JSON. `nullptr` uses a default message.
 - **Thread safety** - `setUpdateAllowed()` is meant to be called from `loop()`. The web handlers run in the AsyncTCP task and read the gate on every request and upload chunk.
-- **Held restarts** - If the gate opens again a long time after a restart was scheduled, the restart happens immediately. Check `isRestartPending()` if your application needs to know one is waiting, for example to delay sleeping.
+- **Held restarts** - If the gate opens again a long time after a restart was scheduled, the restart happens immediately. Check `isRestartPending()` if your application needs to know one is waiting, or `isBusy()` to delay sleeping (see [Sleep and Power-Down](#sleep-and-power-down)).
 - **The boot partition may already be switched** - After a complete firmware upload, the new firmware is the boot partition even while its restart is held. A power cycle in that window boots the new (fully verified) firmware.
+
+## Interrupted Uploads
+
+If the connection drops mid-upload (browser closed, phone left the WiFi), the device gets no more data and no end of request. After `setUploadTimeout()` (default 30 s) without data, the upload is aborted and the status becomes, for example, *"Upload stalled at 43% - not applied, running firmware unchanged. Safe to try again."* A partial firmware upload never changes the boot partition. A partial filesystem upload leaves the filesystem incomplete, so upload it again.
+
+When you open the OTA page again, it shows what the device saw:
+
+| Device state | Page shows |
+|---|---|
+| Upload still running (another browser, or within the timeout) | "An upload is in progress (43%) - wait for it to finish", with the progress bar. Upload is disabled. If it then stalls, the page switches to the failure below |
+| Last upload failed or stalled | "Last upload failed: ..." with the reason. Safe to upload again |
+| Nothing pending | The normal page |
+
+Retrying is always safe: a new upload discards whatever the previous one left behind.
+
+## Sleep and Power-Down
+
+If your application sleeps or powers down on its own, for example deep sleep after a period off, hold it off while `isBusy()` is true. Otherwise sleep can cut off an upload or the restart after it:
+
+```cpp
+if (idleLongEnough() && !ota.isBusy()) {
+    esp_deep_sleep_start();
+}
+```
+
+`isBusy()` clears by itself: a stalled upload is aborted after `setUploadTimeout()`, and a finished firmware upload restarts the device. The exception is a restart held by `setUpdateAllowed(false)`, which waits until updates are allowed again. If your sleep condition and your gate condition can both be true at once, also cap the hold with your own timer.
 
 ## Changing the Partition Table Over the Air
 
@@ -325,7 +362,7 @@ CustomOTA-ESP32/
 
 **"Upload failed: network connection lost" / timed out**
 - The connection dropped before the device replied. The device replies before it restarts, so this is a real failure, not a reboot
-- Check WiFi signal and retry; the status at `/update/status` shows what the device saw
+- Check WiFi signal and retry. Reloading the OTA page shows what the device saw (see [Interrupted Uploads](#interrupted-uploads))
 
 **"Upload Failed (HTTP 400/500)"**
 - Check .bin file validity and ESP32 compatibility

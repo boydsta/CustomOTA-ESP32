@@ -5,6 +5,23 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-26
+
+### Fixed
+- **Dropped uploads no longer stay "in progress" until reboot.** A dropped connection (browser closed, phone left the WiFi) never delivers the final chunk, so `isUpdateInProgress()` stayed true and the `Update` session stayed open. The upload is now aborted after `setUploadTimeout()` (default 30 s) without data. The running firmware is untouched, because the boot partition is only switched after a complete upload.
+
+### Added
+- `setUploadTimeout(unsigned long timeoutMs)` - how long an upload may go without data before it is aborted (default 30000 ms).
+- `isBusy()` - upload in progress or restart pending. Use it to hold off sleep or power-down.
+- `/update/status` reports `lastUploadFailed`, true from a failed or stalled upload until the next upload starts.
+- OTA page shows the device's upload state on load and on its 5 s poll:
+  - an upload it did not start (another browser, or one cut off before a reload): "An upload is in progress (43%) - wait for it to finish", with the progress bar, and Upload disabled;
+  - the last failed upload, e.g. "Last upload failed: Upload stalled at 43% - not applied, running firmware unchanged. Safe to try again.";
+  - when a watched upload finishes, the page reloads once the device is back.
+
+### Changed
+- Upload is disabled while this page's own upload is running.
+
 ## [1.5.0] - 2026-10-23
 
 ### Added
