@@ -1,9 +1,13 @@
-# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.6.0-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.6.1-blue.svg)
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and a web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+## What's New in v1.6.1
+
+- **Partition section folds up** - On the OTA page the partition editor is one line, "Partition Options (advanced)", until you click it. It opens on its own when the filesystem is missing or a new table is waiting to be applied.
 
 ## What's New in v1.6.0
 
@@ -46,7 +50,7 @@ lib_deps =
 
 An unpinned URL always gets the latest `main`. For production builds, pin a release tag so a library update never changes your firmware unexpectedly:
 ```ini
-    https://github.com/boydsta/CustomOTA-ESP32.git#v1.6.0
+    https://github.com/boydsta/CustomOTA-ESP32.git#v1.6.1
 ```
 
 ### Staying on v1.3

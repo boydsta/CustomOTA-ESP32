@@ -1,6 +1,6 @@
 {
     "name": "CustomOTA",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "description": "Real-time compatible ESP32 OTA library with automatic backup detection, boot partition validation, dual partition support, filesystem updates, heap monitoring, enhanced rollback validation, and configurable restart delays",
     "keywords": [
         "ota",

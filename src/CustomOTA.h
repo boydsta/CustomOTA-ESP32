@@ -1,6 +1,6 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.6.0
+ * Version: 1.6.1
  *
  * Author: Boyd Benton
  * Created: 2025
@@ -21,6 +21,10 @@
  * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.6.1 (October 2026):
+ *   - OTA page: the partition section is folded up to one line until clicked. It unfolds
+ *     on its own when the filesystem is missing or a new table is waiting to be applied
+ *
  * v1.6.0 (October 2026):
  *   - Stalled uploads: an upload that stops sending data (connection dropped) is aborted
  *     after setUploadTimeout() (default 30 s). Before, it stayed "in progress" until reboot.
@@ -123,7 +127,7 @@
 #define CUSTOMOTA_VERSION_MAJOR 1
 #define CUSTOMOTA_VERSION_MINOR 6
 #define CUSTOMOTA_VERSION_PATCH 0
-#define CUSTOMOTA_VERSION_STRING "1.6.0"
+#define CUSTOMOTA_VERSION_STRING "1.6.1"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 

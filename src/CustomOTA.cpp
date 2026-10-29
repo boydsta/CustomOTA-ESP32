@@ -723,10 +723,15 @@ R"rawliteral(
         .pt-steps li { margin-bottom: 10px; }
         .pt-steps code, .pt-box code { background-color: #e8e8e8; padding: 0 3px; }
         .pt-list li { margin-bottom: 6px; }
+        #ptSection > summary { cursor: pointer; }
+        #ptSection > summary h2 { display: inline; margin: 0; }
+        #ptSection > summary span { font-size: 16px; color: #666; margin-left: 10px; }
+        #ptSection[open] > summary { margin-bottom: 15px; }
+        #ptSection[open] > summary span { display: none; }
     </style>
 
-    <div class="full-width-box" id="ptSection">
-        <h2>Partition Table (advanced)</h2>
+    <details class="full-width-box" id="ptSection">
+        <summary><h2>Partition Options (advanced)</h2><span>click to expand</span></summary>
 
         <div id="ptFsNeeded" class="status error" style="display: none;">
             The partition table was changed and the filesystem is now empty, so this device's own web pages are missing.
@@ -793,7 +798,7 @@ R"rawliteral(
         </div>
 
         <div id="ptStatus" class="status" style="display: none;"></div>
-    </div>
+    </details>
 
     <script>
         let ptInfo = null;
@@ -854,6 +859,8 @@ R"rawliteral(
             document.getElementById('ptSketch').textContent = ptSize(info.sketchSize) + ' firmware';
             document.getElementById('ptFlash').textContent = ptSize(info.flashSize);
             document.getElementById('ptFsNeeded').style.display = info.fsNeeded ? 'block' : 'none';
+            // Unfold when there is something to act on: missing filesystem or a staged table
+            if (info.fsNeeded || info.pending) document.getElementById('ptSection').open = true;
 
             const preview = document.getElementById('ptPreview');
             if (!info.pending) {

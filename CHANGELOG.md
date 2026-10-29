@@ -5,6 +5,11 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-10-29
+
+### Changed
+- **The partition section on the OTA page is folded up by default.** It shows as one line, "Partition Options (advanced)", and opens on click, so the partition editor can be built in without cluttering the page. It unfolds on its own when the filesystem is missing after a table change or a new table is waiting to be applied, so those messages are never hidden.
+
 ## [1.6.0] - 2026-10-28
 
 ### Fixed
