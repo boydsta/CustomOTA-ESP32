@@ -5,6 +5,16 @@ All notable changes to the CustomOTA library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `CUSTOMOTA_VERSION_PATCH` was 0 in 1.6.1; it now matches `CUSTOMOTA_VERSION_STRING`.
+- `library.json` names the `mathieucarbou` AsyncTCP and ESPAsyncWebServer as dependencies, so a registry install gets the versions the library is built against. It lists Arduino as the only framework.
+- The examples no longer call `delay()` in `loop()`.
+
+### Added
+- README: Security section.
+
 ## [1.6.1] - 2026-10-29
 
 ### Changed

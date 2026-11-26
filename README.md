@@ -230,6 +230,16 @@ ota.setSpiffsFormatOnFailure(false); // Never auto-format SPIFFS
 
 While updates are blocked with `setUpdateAllowed(false, ...)`, `POST /update`, `/update/reboot`, `/update/rollback` and `/update/partitions/apply` answer **409** with the reason. Uploading a `partitions.bin` to check it (`POST /update/partitions`) still works, because nothing is written.
 
+## Security
+
+Anyone who can reach `/update` can replace the firmware, so treat the OTA page as full control of the device.
+
+- **Set credentials.** Without `setCredentials()` (or a username and password in `begin()`), every route is open to anyone on the network.
+- **The connection is not encrypted.** The page runs over plain HTTP. Anyone on the same network can see the firmware being uploaded, and may be able to capture or replay the login. Use it on networks you trust.
+- **Don't expose it to the internet.** Don't port-forward to the device. For remote updates, use a VPN to reach the network instead.
+- **Firmware is not signature-checked.** ESP-IDF checks the image is valid ESP32 firmware, not who built it. If you need that, enable ESP-IDF Secure Boot.
+- **Use `setUpdateAllowed(false, reason)`** while a restart would be unsafe, so an update cannot interrupt the application at the wrong moment.
+
 ## Blocking Updates While Unsafe
 
 Some devices must not restart at certain times, for example a vehicle controller while the vehicle is running. Call `setUpdateAllowed()` every loop with your own condition:

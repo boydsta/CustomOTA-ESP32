@@ -124,6 +124,4 @@ void loop() {
 
   // Handle OTA operations (must be called every loop)
   ota.handle();
-
-  delay(10); // Small delay to prevent overwhelming the serial output
 }

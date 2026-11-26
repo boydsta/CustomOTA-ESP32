@@ -35,17 +35,17 @@
     "homepage": "https://github.com/boydsta/CustomOTA-ESP32",
     "dependencies": [
         {
+            "owner": "mathieucarbou",
             "name": "AsyncTCP",
-            "version": "^3.2.3",
-            "authors": "Hristo Gochkov"
+            "version": "^3.2.3"
         },
         {
-            "name": "ESPAsyncWebServer", 
-            "version": "^3.1.1",
-            "authors": "Hristo Gochkov"
+            "owner": "mathieucarbou",
+            "name": "ESPAsyncWebServer",
+            "version": "^3.1.1"
         }
     ],
-    "frameworks": ["arduino", "espidf"],
+    "frameworks": ["arduino"],
     "platforms": ["espressif32"],
     "build": {
         "includeDir": "src",
