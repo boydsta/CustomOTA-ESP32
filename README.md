@@ -464,4 +464,7 @@ MIT License - Free for commercial and personal use.
 
 **Note**: This library depends on AsyncTCP and ESPAsyncWebServer which are licensed under LGPL 3.0. This does not affect the MIT license of this library, but users should be aware of the LGPL requirements for those dependencies.
 
+## Acknowledgements
+Thank you to Ra Cleave for testing.
+
 **Created by Boyd Benton**
