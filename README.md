@@ -1,9 +1,14 @@
-# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.6.1-blue.svg)
+# CustomOTA-ESP32 ![Version](https://img.shields.io/badge/Version-1.6.2-blue.svg)
 
 ESP32 Over-The-Air firmware update library with dual partition backup system, filesystem updates, and a web interface.
 
 ![ESP32](https://img.shields.io/badge/ESP32-Compatible-green.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+## What's New in v1.6.2
+
+- **Saved backup info is read again** - The backup record was always skipped on boot (logging `nvs_get_blob len fail: backup_ver NOT_FOUND`) and replaced by auto-detection, so the backup's firmware version showed as "Previous Firmware (auto-detected)". Rollback itself was unaffected.
+- `CUSTOMOTA_VERSION_PATCH` now matches the version string, and `library.json` lists the AsyncTCP / ESPAsyncWebServer dependencies.
 
 ## What's New in v1.6.1
 
@@ -50,7 +55,7 @@ lib_deps =
 
 An unpinned URL always gets the latest `main`. For production builds, pin a release tag so a library update never changes your firmware unexpectedly:
 ```ini
-    https://github.com/boydsta/CustomOTA-ESP32.git#v1.6.1
+    https://github.com/boydsta/CustomOTA-ESP32.git#v1.6.2
 ```
 
 ### Staying on v1.3

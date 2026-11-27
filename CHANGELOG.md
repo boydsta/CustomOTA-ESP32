@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-11-28
+
 ### Fixed
+- **Saved backup info is read again.** `loadUpdateInfo()` used `getBytesLength()` on `backup_ver`, which is stored as a string. That call only finds blobs, so it logged `nvs_get_blob len fail: backup_ver NOT_FOUND` on every boot and the saved backup record was always skipped. Auto-detection then replaced it, so rollback still worked, but the backup's firmware version was lost and shown as "Previous Firmware (auto-detected)".
 - `CUSTOMOTA_VERSION_PATCH` was 0 in 1.6.1; it now matches `CUSTOMOTA_VERSION_STRING`.
 - `library.json` names the `mathieucarbou` AsyncTCP and ESPAsyncWebServer as dependencies, so a registry install gets the versions the library is built against. It lists Arduino as the only framework.
 - The examples no longer call `delay()` in `loop()`.

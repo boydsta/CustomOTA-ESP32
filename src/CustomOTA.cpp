@@ -1822,9 +1822,11 @@ void CustomOTA::loadUpdateInfo() {
     // Check if backup_ver key exists before trying to read it
     // Use isKey() to avoid NVS errors when key doesn't exist
     if (_prefs.isKey("backup_ver")) {
-        size_t requiredSize = _prefs.getBytesLength("backup_ver");
-        if (requiredSize > 0) {
-            String backupVersion = _prefs.getString("backup_ver", "");
+        // backup_ver is stored with putString(), so read it as a string. (getBytesLength()
+        // only finds blobs: it logged "nvs_get_blob len fail" and returned 0, so saved
+        // backup info was always skipped and replaced by auto-detection.)
+        String backupVersion = _prefs.getString("backup_ver", "");
+        if (backupVersion.length() > 0) {
             String backupPartition = _prefs.getString("backup_part", "");
             String backupValid = _prefs.getString("backup_valid", "");
 

@@ -1,10 +1,10 @@
 /*
  * CustomOTA Library Header for ESP32
- * Version: 1.6.1
+ * Version: 1.6.2
  *
  * Author: Boyd Benton
  * Created: 2025
- * Last Updated: October 2026
+ * Last Updated: November 2026
  * 
  * Features:
  * - Dual firmware/filesystem OTA updates
@@ -21,6 +21,10 @@
  * - Serial upload boot partition correction
  * 
  * Version History:
+ * v1.6.2 (November 2026):
+ *   - Saved backup info is read again: backup_ver is a string, but was checked with
+ *     getBytesLength() (blobs only), so it was always skipped ("nvs_get_blob len fail")
+ *
  * v1.6.1 (October 2026):
  *   - OTA page: the partition section is folded up to one line until clicked. It unfolds
  *     on its own when the filesystem is missing or a new table is waiting to be applied
@@ -126,8 +130,8 @@
 // Library version information
 #define CUSTOMOTA_VERSION_MAJOR 1
 #define CUSTOMOTA_VERSION_MINOR 6
-#define CUSTOMOTA_VERSION_PATCH 1
-#define CUSTOMOTA_VERSION_STRING "1.6.1"
+#define CUSTOMOTA_VERSION_PATCH 2
+#define CUSTOMOTA_VERSION_STRING "1.6.2"
 #define CUSTOMOTA_BUILD_DATE __DATE__
 #define CUSTOMOTA_BUILD_TIME __TIME__
 
